@@ -204,14 +204,11 @@ sealed class OwnerPage
             ResearchRuntimeRow = BuildRuntimeRow(id => ChooseRoleRuntime(CouncilRoles.Research, id));
             ResearchModelRow = BuildModelRow(_host.ModelChoices, _host.SpendToday.Currency, m => ChooseRoleModel(CouncilRoles.Research, m));
             Note.IsVisible = false;
-            Root = Ui.Section(Labels.SeatChoicesTitle, Ui.Col(Theme.S2,
+            Root = Ui.Part(Labels.SeatChoicesTitle, Ui.Col(Theme.S4,
                 Ui.Muted(Labels.SeatChoicesAreYours),
-                Ui.Spacer(Theme.S2),
-                Ui.FieldRow(Labels.AiModel, ModelRow),
-                ModelNote,
-                Ui.Spacer(Theme.S2),
-                Ui.FieldRow(Labels.ResearchRuntime, ResearchRuntimeRow),
-                Ui.FieldRow(Labels.ResearchModel, ResearchModelRow),
+                Ui.Col(Theme.S2, Ui.Form(Labels.AiModel, ModelRow), ModelNote),
+                Ui.Form(Labels.ResearchRuntime, ResearchRuntimeRow),
+                Ui.Form(Labels.ResearchModel, ResearchModelRow),
                 Note));
         }
 
@@ -596,21 +593,28 @@ sealed class OwnerPage
             () => _host.Gateway.EnableAiTrading());
 
         // THE EMERGENCY PRESSES, ALWAYS IN VIEW (U-ui-glance): a strip above the page's scroll, so stop, cancel all and close all are
-        // never more than a glance away however far down the owner has read. Each keeps its count.
-        var emergency = Ui.Section("Emergency", Ui.Col(Theme.S2,
-            Ui.Wrap(Theme.S3,
-                _stopButton,
-                // ONE PRESS, ONE SET OF RECORDS, AND THEN A PERSON: the gateway writes a flagged row per target before the wire, pauses
-                // trading on them, and refuses the next press until they are resolved on the Dashboard.
-                Ui.Confirm(Labels.CancelAllWorkingOrders, "Confirm: cancel all working orders",
-                    () => PressAsync(() => _host.Gateway.OperatorCancelAllAsync(), Labels.CancelAllWorkingOrders)),
-                Ui.Confirm(Labels.CloseAllPositions, "Confirm: close all positions with market orders",
-                    () => PressAsync(() => _host.Gateway.OperatorCloseAllAsync(), Labels.CloseAllPositions))),
-            _lossClosedNote,
-            _lossFlattenNote,
-            Ui.With(Ui.Muted("Stopping the AI removes its permission to trade. It does not touch your orders or positions. "
-                + "Stopping takes one press; letting it trade again takes two. Cancelling all orders or closing all positions takes two."),
-                t => t.FontSize = Theme.Small)));
+        // never more than a glance away however far down the owner has read. Each keeps its count. ONE GROUP ON THE GLASS (U-ui-world):
+        // the stop is red light, the two that act on orders and positions sit beside it as glass, and what each does is said under them.
+        var emergency = new Border
+        {
+            // NO RULE OF ITS OWN: the first line under it draws the hairline that sets the group off from the page.
+            Padding = new Thickness(0, 0, 0, Theme.S3),
+            Child = Ui.Col(Theme.S3,
+                Ui.Row(Theme.S2, Ui.Dot(Theme.Danger), Ui.Eyebrow("Emergency")),
+                Ui.Wrap(Theme.S3,
+                    _stopButton,
+                    // ONE PRESS, ONE SET OF RECORDS, AND THEN A PERSON: the gateway writes a flagged row per target before the wire, pauses
+                    // trading on them, and refuses the next press until they are resolved on the Dashboard.
+                    Ui.Confirm(Labels.CancelAllWorkingOrders, "Confirm: cancel all working orders",
+                        () => PressAsync(() => _host.Gateway.OperatorCancelAllAsync(), Labels.CancelAllWorkingOrders)),
+                    Ui.Confirm(Labels.CloseAllPositions, "Confirm: close all positions with market orders",
+                        () => PressAsync(() => _host.Gateway.OperatorCloseAllAsync(), Labels.CloseAllPositions))),
+                _lossClosedNote,
+                _lossFlattenNote,
+                Ui.With(Ui.Muted("Stopping the AI removes its permission to trade. It does not touch your orders or positions. "
+                    + "Stopping takes one press; letting it trade again takes two. Cancelling all orders or closing all positions takes two."),
+                    t => { t.FontSize = Theme.Small; t.MaxWidth = Theme.LedeMaxWidth; t.HorizontalAlignment = HorizontalAlignment.Left; }))
+        };
 
         _dailyCap = Ui.AmountField(_host.Gateway.Settings.AiDailyCostCap, AmountKind.Decimal);
 
@@ -626,61 +630,62 @@ sealed class OwnerPage
         _saveHarnessKey = BuildSaveHarnessKey(_host.HarnessKey, () => _harnessKey.Text,
             () => HarnessKeyDestination(_host.Harness?.Manifest), AfterHarnessKeyPress);
 
-        var spending = Ui.Section("Your real money for the AI", Ui.Col(Theme.S2,
+        // TODAY'S FIGURES, DRAWN (U-ui-world): what was spent or set aside, set large, its share of the day's limit as a measure, and the
+        // sentence that says the same in full under it. The figure and the measure come from the reading's own fields, never the sentence.
+        var spending = Ui.Part("Your real money for the AI", Ui.Col(Theme.S4,
             Ui.Muted("Every turn the AI takes is paid for one of two ways: with real money, through an API key, or out of your ChatGPT "
                 + "plan. The real-money limit is yours. How much of your plan the AI may use is the security board's decision — the "
                 + Labels.BoardPage + " page shows it. Reaching either stops the AI taking new turns of that kind; it does not touch "
                 + "your orders or positions. A turn TradeAgent cannot tell the kind of counts against both."),
-            Ui.Spacer(Theme.S2),
-            Ui.Label("Real money (API keys)"),
-            _moneyToday,
-            Ui.FieldRow(Labels.DailyCostCap, _dailyCap,
-                "0 stops every paid turn. Raising this lets the AI spend more of your money, so it asks again first."),
-            Ui.Spacer(Theme.S2),
-            BuildSaveDailyCap(_dailyCap, () => _host.Gateway.Settings.AiDailyCostCap,
-                () => _host.SpendToday.Currency, SaveDailyCap, why => Ui.Refuse(_capNote, why)),
+            Ui.Col(Theme.S2,
+                Ui.Figure(_moneyFigure, "Real money (API keys)"),
+                _moneyMeter,
+                _moneyToday),
+            Ui.Form(Labels.DailyCostCap, _dailyCap,
+                "0 stops every paid turn. Raising this lets the AI spend more of your money, so it asks again first.",
+                BuildSaveDailyCap(_dailyCap, () => _host.Gateway.Settings.AiDailyCostCap,
+                    () => _host.SpendToday.Currency, SaveDailyCap, why => Ui.Refuse(_capNote, why))),
             _capNote,
-            Ui.Spacer(Theme.S3),
             // THE PLAN'S DAY, A READING (Q5): its day-total is the board's, so there is no box here.
-            Ui.Label("Your ChatGPT plan (counted at list price, not money)"),
-            _planToday,
-            Ui.Micro(Labels.PlanDayTotalIsTheBoards),
-            Ui.Micro(Labels.PlanVendorLimit),
-            Ui.Micro(Labels.PlanSharedWithYou),
-            Ui.Spacer(Theme.S2),
+            Ui.Col(Theme.S2,
+                Ui.Figure(_planFigure, "Your ChatGPT plan (counted at list price, not money)"),
+                _planMeter,
+                _planToday),
+            Ui.Col(Theme.S1,
+                Ui.Micro(Labels.PlanDayTotalIsTheBoards),
+                Ui.Micro(Labels.PlanVendorLimit),
+                Ui.Micro(Labels.PlanSharedWithYou)),
             _seatClasses));
 
-        var evidence = Ui.Section("What a turn is priced at", Ui.Col(Theme.S2,
+        var evidence = Ui.Part("What a turn is priced at", Ui.Col(Theme.S4,
             Ui.Muted("What TradeAgent counts a turn as costing. It is evidence, not a limit: no model sets it, and the security board "
                 + "cannot either. TradeAgent works out what each turn cost from the tokens your AI tool reports; if you know what you "
                 + "are actually charged, put it here and it is used instead."),
-            Ui.Spacer(Theme.S2),
-            Ui.FieldRow(Labels.AiPriceIn, _priceIn),
-            Ui.FieldRow(Labels.AiPriceOut, _priceOut, ShippedRateHint(shipped)),
-            Ui.Spacer(Theme.S2),
-            DisarmedByEdits(BuildSaveAiPrice(ShownRate, PendingRate, () => _host.SpendToday.Currency, SaveAiPrice,
-                () => Ui.Refusal((Labels.AiPriceIn, _priceIn), (Labels.AiPriceOut, _priceOut)), why => Ui.Refuse(_priceNote, why)),
-                [_priceIn, _priceOut]),
+            Ui.Form(Labels.AiPriceIn, _priceIn),
+            // THE PRESS BESIDE THE SECOND BOX: it saves both halves together, or neither.
+            Ui.Form(Labels.AiPriceOut, _priceOut, ShippedRateHint(shipped),
+                DisarmedByEdits(BuildSaveAiPrice(ShownRate, PendingRate, () => _host.SpendToday.Currency, SaveAiPrice,
+                    () => Ui.Refusal((Labels.AiPriceIn, _priceIn), (Labels.AiPriceOut, _priceOut)), why => Ui.Refuse(_priceNote, why)),
+                    [_priceIn, _priceOut])),
             _priceNote));
 
-        var campaigns = Ui.Section("What a research campaign may spend", Ui.Col(Theme.S2,
-            Ui.KeyValueLive("Trials per campaign", _trialBudget),
-            Ui.KeyValueLive("Of them, for exploration", _explorationBudget),
-            Ui.KeyValueLive("Final verdicts per lineage", _verdictBudget),
-            Ui.KeyValueLive("The judge's capital", _judgeCapital),
-            Ui.Spacer(Theme.S2),
+        // WHAT A CAMPAIGN MAY SPEND: three counts, set as figures; the judge's capital, a figure with its unit in words, as a fact.
+        var campaigns = Ui.Part("What a research campaign may spend", Ui.Col(Theme.S4,
+            Ui.Figures(
+                Ui.Figure(_trialBudget, "Trials per campaign"),
+                Ui.Figure(_explorationBudget, "Of them, for exploration"),
+                Ui.Figure(_verdictBudget, "Final verdicts per lineage")),
+            Ui.Fact("The judge's capital", _judgeCapital),
             Ui.Muted(Labels.CampaignBudgetsAreEvidence)));
 
         // EACH PAIR'S CAMPAIGN, WHAT IT HAS LEFT AND WHAT ITS RENEWAL WAITS FOR (U-evidence-breadth item 4): one text, updated in place.
-        var standings = Ui.Section("Campaigns under evidence", _campaignStandings);
+        var standings = Ui.Part("Campaigns under evidence", _campaignStandings);
 
-        var connections = Ui.Section("Key for TradeAgent's own worker", Ui.Col(Theme.S2,
+        var connections = Ui.Part("Key for TradeAgent's own worker", Ui.Col(Theme.S3,
             Ui.Muted("TradeAgent's own worker calls the AI provider directly, with the tools TradeAgent chose and a budget it enforces on "
                 + "every request. It cannot run a shell, install anything or reach the internet. It needs a key, which is yours."),
-            Ui.Spacer(Theme.S2),
-            Ui.FieldRow(Labels.HarnessKey, _harnessKey, Labels.HarnessKeyHint),
+            Ui.Form(Labels.HarnessKey, _harnessKey, Labels.HarnessKeyHint),
             _harnessKeyOrigin,
-            Ui.Spacer(Theme.S2),
             // A ROW THAT WRAPS: armed, the press says the whole address, and a plain row would push the button beside it off the card.
             Ui.Wrap(Theme.S3,
                 _saveHarnessKey,
@@ -692,18 +697,16 @@ sealed class OwnerPage
         _withdrawEnvelope = BuildEnvelopeWithdrawConfirm(StandingEnvelopeId, ApplyEnvelopeWithdrawal);
         _stopDeployment = BuildDeploymentStopConfirm(RunningDeploymentId, ApplyDeploymentStop);
 
-        // A CARD, NOT A SECTION: its section header (U-ui-glance) carries the title.
-        var running = Ui.Card(Ui.Col(Theme.S2,
-            Ui.KeyValueLive("Capital allocated now", _allocationValue),
-            Ui.KeyValueLive("Paper experiments allowed", _envelopeValue),
-            Ui.KeyValueLive("Running now", _deploymentValue),
-            Ui.Spacer(Theme.S2),
-            Ui.Muted("Allocating capital and granting paper experiments are the security board's decisions. Taking either away is "
+        // THE LINE'S OWN BODY: three facts, what taking them away does, and the two presses that do it.
+        var running = Ui.Col(Theme.S4,
+            Ui.Fact("Capital allocated now", _allocationValue),
+            Ui.Fact("Paper experiments allowed", _envelopeValue),
+            Ui.Fact("Running now", _deploymentValue),
+            Ui.With(Ui.Muted("Allocating capital and granting paper experiments are the security board's decisions. Taking either away is "
                 + "yours: withdrawing stops every experiment under the envelope at once, and stopping a run cancels its working "
-                + "orders and closes what it holds."),
-            Ui.Spacer(Theme.S2),
+                + "orders and closes what it holds."), t => t.FontSize = Theme.Small),
             Ui.Wrap(Theme.S3, _withdrawEnvelope, _stopDeployment),
-            _envelopeNote));
+            _envelopeNote);
 
         // THE REVIEW-HOLD CARD. Shown only while something is held on paper, a board seat active or not (see the class summary).
         _release = BuildReleaseConfirm(HeldScopes, () => _releaseNote.Text ?? "", ApplyRelease);
@@ -716,37 +719,23 @@ sealed class OwnerPage
         };
         _releaseNoteResult.IsVisible = false;
 
-        _releaseCard = new Border
-        {
-            Background = Theme.CautionSoft,
-            BorderBrush = Theme.Caution,
-            BorderThickness = new Thickness(1),
-            CornerRadius = Theme.Radius,
-            Padding = new Thickness(Theme.S5),
-            IsVisible = false,
-            Child = Ui.Col(Theme.S3,
-                Ui.With(Ui.Eyebrow("Held for you to look at"), t => t.Foreground = Theme.Caution),
-                _releaseHeld,
-                Ui.Muted(Labels.ReopenAfterReviewHint),
-                Ui.Micro(Labels.ReopenAfterReviewIsYoursUntilTheBoard),
-                _releaseNote,
-                _release,
-                _releaseNoteResult)
-        };
+        // THE TWO NOTICES THAT OUTRANK THE PAGE (U-ui-world: the one edged block a page keeps): a hold waiting on his look, and settings
+        // that could not be read. Above the lines, never inside one.
+        _releaseCard = Ui.Notice(Theme.Caution, Ui.Col(Theme.S3,
+            Ui.With(Ui.Eyebrow("Held for you to look at"), t => t.Foreground = Theme.Caution),
+            _releaseHeld,
+            Ui.Muted(Labels.ReopenAfterReviewHint),
+            Ui.Micro(Labels.ReopenAfterReviewIsYoursUntilTheBoard),
+            _releaseNote,
+            _release,
+            _releaseNoteResult));
+        _releaseCard.IsVisible = false;
 
-        _unreadableCard = new Border
-        {
-            Background = Theme.CautionSoft,
-            BorderBrush = Theme.Caution,
-            BorderThickness = new Thickness(1),
-            CornerRadius = Theme.Radius,
-            Padding = new Thickness(Theme.S5),
-            IsVisible = false,
-            Child = Ui.Col(Theme.S3,
-                Ui.With(Ui.Eyebrow(Labels.SettingsCouldNotBeReadTitle), t => t.Foreground = Theme.Caution),
-                Ui.Body(Labels.SettingsCouldNotBeReadBanner),
-                Ui.Body(Labels.SettingsCouldNotBeReadNext, Theme.Caution))
-        };
+        _unreadableCard = Ui.Notice(Theme.Caution, Ui.Col(Theme.S3,
+            Ui.With(Ui.Eyebrow(Labels.SettingsCouldNotBeReadTitle), t => t.Foreground = Theme.Caution),
+            Ui.Body(Labels.SettingsCouldNotBeReadBanner),
+            Ui.Body(Labels.SettingsCouldNotBeReadNext, Theme.Caution)));
+        _unreadableCard.IsVisible = false;
 
         // AFTER THE REAL MONEY, because perception's budget is a slice of that cap.
         _perception = PerceptionCard.For(_host);
@@ -760,25 +749,25 @@ sealed class OwnerPage
         _boardComposition = new BoardComposition(() => _host.Board, _host.Gateway.SetBoardBudgetShare, _host.Gateway.FoundBoardSeat,
             _host.Gateway.RetireBoardSeat, _host.ActivateBoardSeat);
 
-        // THE PAGE IN SECTIONS (U-ui-glance; it was ~7,600 px of cards): what is running open, everything else closed under a header
-        // that says what is in it — the real money's with today's figure. A caution card (held for review, settings unreadable) stays
-        // above the sections, never inside one. Nothing is rebuilt: a section shows or hides the same controls.
-        var sections = Ui.Col(Theme.S5,
+        // THE PAGE IN LINES (U-ui-glance; U-ui-world): what is running open, everything else closed under a line that says what is in it
+        // — the real money's with today's figure and its measure. A notice (held for review, settings unreadable) stays above the lines,
+        // never inside one. Nothing is rebuilt: a line shows or hides the same controls.
+        var sections = Ui.Col(Theme.S2,
             _unreadableCard, _releaseCard,
-            Ui.Fold(Labels.OwnerGroupRunning, running, open: true),
-            Ui.Fold(Labels.OwnerGroupMoney, Ui.Col(Theme.S6, spending, _perception.Root), open: false, _moneySummary),
-            Ui.Fold(Labels.OwnerGroupBoard, _boardComposition.Root, open: false, Summary(Labels.OwnerGroupBoardSummary)),
-            Ui.Fold(Labels.OwnerGroupConnections, Ui.Col(Theme.S6, settings.Platform, settings.Account, connections, _seatChoices.Root,
+            Ui.Line(Labels.OwnerGroupRunning, running, open: true),
+            Ui.Line(Labels.OwnerGroupMoney, Ui.Col(Theme.S8, spending, _perception.Root), open: false, _moneySummary, _moneyLineMeter),
+            Ui.Line(Labels.OwnerGroupBoard, _boardComposition.Root, open: false, Summary(Labels.OwnerGroupBoardSummary)),
+            Ui.Line(Labels.OwnerGroupConnections, Ui.Col(Theme.S8, settings.Platform, settings.Account, connections, _seatChoices.Root,
                 settings.Bridge), open: false, Summary(Labels.OwnerGroupConnectionsSummary)),
-            Ui.Fold(Labels.OwnerGroupEvidence, Ui.Col(Theme.S6, evidence, settings.Friction, settings.Holdout, campaigns, standings), open: false,
+            Ui.Line(Labels.OwnerGroupEvidence, Ui.Col(Theme.S8, evidence, settings.Friction, settings.Holdout, campaigns, standings), open: false,
                 Summary(Labels.OwnerGroupEvidenceSummary)),
-            Ui.Fold(Labels.OwnerGroupUpdates, settings.Updates, open: false, Summary(Labels.OwnerGroupUpdatesSummary)),
-            _signInStart.Fold = Ui.Fold(Labels.OwnerGroupSignIn, _signInStart.Root, open: false, Summary(Labels.OwnerGroupSignInSummary)),
-            Ui.Fold(Labels.OwnerGroupExplained, settings.WhatTheseChange, open: false, Summary(Labels.OwnerGroupExplainedSummary)));
+            Ui.Line(Labels.OwnerGroupUpdates, settings.Updates, open: false, Summary(Labels.OwnerGroupUpdatesSummary)),
+            _signInStart.Fold = Ui.Line(Labels.OwnerGroupSignIn, _signInStart.Root, open: false, Summary(Labels.OwnerGroupSignInSummary)),
+            Ui.Line(Labels.OwnerGroupExplained, settings.WhatTheseChange, open: false, Summary(Labels.OwnerGroupExplainedSummary)));
 
         var scroll = Pages.Scroll(sections);
         scroll[Grid.RowProperty] = 2;
-        emergency.Margin = new Thickness(0, 0, Theme.S3, Theme.S5);   // its right edge with the cards below, beside their scrollbar
+        emergency.Margin = new Thickness(0, 0, Theme.S3, Theme.S4);   // its right edge with the lines below, beside their scrollbar
         emergency[Grid.RowProperty] = 1;
         var root = new Grid { RowDefinitions = new RowDefinitions("Auto,Auto,*") };
         root.Children.Add(Pages.Header(Labels.OwnerPage, Labels.OwnerPageSubtitle));
@@ -787,14 +776,22 @@ sealed class OwnerPage
         Root = root;
         EmergencyStrip = emergency;
 
-        static TextBlock Summary(string text) => Ui.With(Ui.Muted(text), t => t.FontSize = Theme.Small);
+        static TextBlock Summary(string text) => Ui.Muted(text);
     }
 
     /// <summary>The emergency presses' strip, above the page's scroll — for a test to hold that it is never inside it.</summary>
     internal Control EmergencyStrip { get; }
 
     /// <summary>The real-money section's header line: today's figure, kept current with the section's own.</summary>
-    readonly TextBlock _moneySummary = Ui.With(Ui.Muted(""), t => t.FontSize = Theme.Small);
+    readonly TextBlock _moneySummary = Ui.Body("");
+
+    /// <summary>TODAY'S SPEND OF THE DAY'S LIMIT, DRAWN (U-ui-world): on the line's header, and again over the sentence inside it.</summary>
+    readonly Meter _moneyLineMeter = new(), _moneyMeter = Measure(), _planMeter = Measure();
+
+    static Meter Measure() => new() { HorizontalAlignment = HorizontalAlignment.Left, Width = Theme.LineMeasureWidth };
+
+    /// <summary>Today's spend and the plan's use, set as figures — "–" until a metered reading says them.</summary>
+    readonly TextBlock _moneyFigure = Ui.FigureText(), _planFigure = Ui.FigureText();
 
     public void Update(GatewayStatus status)
     {
@@ -806,6 +803,7 @@ sealed class OwnerPage
         _moneyToday.Text = moneyToday;
         OrgText.Set(_moneySummary, moneyToday);
         _planToday.Text = planToday;
+        ShowToday(_host.SpendToday);
         _seatClasses.Text = SeatClassesLine(CouncilRoles.All.Select(r => (CouncilRoles.Title(r), _host.BillingClassOf(r))));
 
         // THE CLOSURE AND WHAT WAS DONE ABOUT IT, off the records on the same pass and updated in place.
@@ -836,6 +834,27 @@ sealed class OwnerPage
         _signInStart.Update();
 
         Refresh();
+    }
+
+    /// <summary>
+    /// TODAY'S FIGURES AND MEASURES, off the reading's own fields: what was spent or set aside, and its share of the day's limit — empty
+    /// (unknown) where nothing is metered or the limit is 0, which has no share; amber once the next turn of that kind waits.
+    /// </summary>
+    void ShowToday(AiSpendToday today)
+    {
+        Draw(today with { PlanReading = null }, _moneyFigure, _moneyMeter, _moneyLineMeter);
+        Draw(today.PlanReading ?? today, _planFigure, _planMeter, null);
+
+        static void Draw(AiSpendToday r, TextBlock figure, Meter meter, Meter? also)
+        {
+            var used = r.Spent + r.Reserved;
+            var text = r.Metered ? MissionSituation.Money(used, r.Currency) : "–";
+            if (figure.Text != text) figure.Text = text;
+            double? share = r.Metered && r.Cap > 0m ? (double)(used / r.Cap) : null;
+            var tone = r.Metered && !r.AdmitsAnotherTurn ? Theme.Caution : Theme.Text;
+            meter.Set(share, tone);
+            also?.Set(share, tone);
+        }
     }
 
     /// <summary>The evidence settings a campaign copies at open, read off the settings row in force — never typed here.</summary>
@@ -1376,24 +1395,23 @@ sealed class BoardComposition
         RetireSeat.SelectionChanged += (_, _) => Ui.DisarmConfirm(Retire);
         foreach (var b in new[] { SetShare, Found, Retire, Activate }) b.HorizontalAlignment = HorizontalAlignment.Left;
 
-        Root = Ui.Section(Labels.BoardCompositionTitle, Ui.Col(Theme.S2,
+        // A FORM PER ACT (U-ui-world): the share's box with its press; a seat's three closed facts side by side — each short — and the
+        // press that founds it; the seat to retire with its press; the dormant seat with its press and, while armed, what it changes.
+        Root = Ui.Part(Labels.BoardCompositionTitle, Ui.Col(Theme.S5,
             Ui.Muted(Labels.BoardCompositionIsYours),
-            Ui.Spacer(Theme.S2),
-            ShareNow,
-            Ui.FieldRow(Labels.BoardShareLabel, Share),
-            SetShare,
-            Ui.Spacer(Theme.S2),
-            Ui.FieldRow("Seat class", SeatClass),
-            Ui.FieldRow("Model class", ModelClass),
-            Ui.FieldRow("Vendor family", Vendor),
-            Found,
-            Ui.Spacer(Theme.S2),
-            Ui.FieldRow("Seat", RetireSeat),
-            Retire,
-            Ui.Spacer(Theme.S2),
-            Ui.FieldRow("Dormant seat", ActivateSeat),
-            Activate,
-            ActivateWhat,
+            Ui.Col(Theme.S3,
+                ShareNow,
+                Ui.Form(Labels.BoardShareLabel, Share, (string?)null, SetShare)),
+            Ui.Col(Theme.S3,
+                Ui.Wrap(Theme.S4,
+                    Ui.Form("Seat class", SeatClass),
+                    Ui.Form("Model class", ModelClass),
+                    Ui.Form("Vendor family", Vendor)),
+                Found),
+            Ui.Form("Seat", RetireSeat, (string?)null, Retire),
+            Ui.Col(Theme.S2,
+                Ui.Form("Dormant seat", ActivateSeat, (string?)null, Activate),
+                ActivateWhat),
             Note));
         Update();
     }

@@ -39,10 +39,13 @@ internal sealed class SignInStartCard
             catch (Exception ex) { Ui.ReportError?.Invoke($"Windows could not open its startup apps: {ex.Message}"); }
         });
         _note.IsVisible = false;
-        Root = Ui.Section("Opening when you sign in", Ui.Col(Theme.S3,
+        // THE STATE IS THE THING READ (U-ui-world): set a step over the page's words, what it needs under it, and the press — in a row
+        // that wraps, because the armed sentence is longer than the resting label.
+        _state.FontSize = Theme.ValueWords;
+        Root = Ui.Part("Opening when you sign in", Ui.Col(Theme.S3,
             _state,
             Ui.Muted(AppHost.SignInNeedsSignIn),
-            Ui.With(Ui.Row(Theme.S2, _press, _startupApps), r => r.HorizontalAlignment = HorizontalAlignment.Left),
+            Ui.Wrap(Theme.S3, _press, _startupApps),
             _note));
         Update();
     }

@@ -140,6 +140,9 @@ sealed class PerceptionCard
     readonly TextBlock _keyNote = Ui.Micro("");
     readonly TextBlock _budgetNote = Ui.Micro("");
     readonly TextBlock _spent = Ui.Micro("");
+
+    /// <summary>TODAY'S SHARE OF PERCEPTION'S BUDGET, DRAWN (U-ui-world), off the ledger's totals — hidden while the budget is 0, which has no share.</summary>
+    readonly Meter _spentMeter = new() { HorizontalAlignment = HorizontalAlignment.Left, Width = Theme.LineMeasureWidth };
     readonly TextBlock _worst = Ui.Micro("");
     readonly TextBlock _result = Ui.With(Ui.Body(""), t => t.IsVisible = false);
 
@@ -223,37 +226,40 @@ sealed class PerceptionCard
         TestButton = Ui.Primary(Labels.PerceptionTest, Test);
         TestButton.HorizontalAlignment = HorizontalAlignment.Left;
 
-        Root = Ui.Section("Perception", Ui.Col(Theme.S2,
+        // ON GLASS (U-ui-world): the instrument and what it costs; the key as a form; the budget as a form with today's share of it drawn;
+        // the test press with its worst case. A hairline between the four, no box round any.
+        Root = Ui.Part("Perception", Ui.Col(Theme.S5,
             Ui.Muted("Perception is a decision model asked short, typed questions — Jev, a model that answers each one with a "
                      + "probability. Nothing in TradeAgent asks it anything yet except the test at the bottom of this card. Its "
                      + "key, its daily budget and what it costs are set here, and no AI can reach any of them."),
-            Ui.Spacer(Theme.S2),
-            Ui.FieldRow(Labels.PerceptionInstrument, _choiceRow),
-            _stopped,
-            _price,
-            _tokens,
-            _requests,
-            _ownBound,
-            Ui.Micro(Terms),
+            Ui.Col(Theme.S2,
+                Ui.Form(Labels.PerceptionInstrument, _choiceRow),
+                _stopped,
+                _price,
+                _tokens,
+                _requests,
+                _ownBound,
+                Ui.Micro(Terms)),
             Ui.Divider(),
-            Ui.FieldRow(Labels.PerceptionKey, KeyBox, Labels.HarnessKeyHint),
-            _keyDestination,
-            Ui.Spacer(Theme.S2),
-            // A ROW THAT WRAPS: armed, the press names the whole address.
-            Ui.Wrap(Theme.S3, SaveKey, ForgetKey),
-            _keyNote,
+            Ui.Col(Theme.S3,
+                Ui.Form(Labels.PerceptionKey, KeyBox, Labels.HarnessKeyHint),
+                _keyDestination,
+                // A ROW THAT WRAPS: armed, the press names the whole address.
+                Ui.Wrap(Theme.S3, SaveKey, ForgetKey),
+                _keyNote),
             Ui.Divider(),
-            Ui.FieldRow(Labels.PerceptionDailyBudget, BudgetBox,
-                "Inside your daily AI limit, never on top of it. 0 means perception is never asked. Raising it lets "
-                + "perception spend more of your money, so it asks again first."),
-            Ui.Spacer(Theme.S2),
-            SaveBudget,
-            _budgetNote,
-            _spent,
+            Ui.Col(Theme.S3,
+                Ui.Form(Labels.PerceptionDailyBudget, BudgetBox,
+                    "Inside your daily AI limit, never on top of it. 0 means perception is never asked. Raising it lets "
+                    + "perception spend more of your money, so it asks again first.", SaveBudget),
+                _budgetNote,
+                _spentMeter,
+                _spent),
             Ui.Divider(),
-            TestButton,
-            _worst,
-            _result));
+            Ui.Col(Theme.S2,
+                TestButton,
+                _worst,
+                _result)));
 
         Refresh();
     }
@@ -444,6 +450,10 @@ sealed class PerceptionCard
         _keyNote.Foreground = _keyNotTaken is null && held ? Theme.TextMuted : Theme.Caution;
 
         _spent.Text = w.Spent;
+        var budget = ReadOr(_src.Budget, 0m);
+        _spentMeter.IsVisible = budget > 0m;
+        _spentMeter.Set(perception is null || day is null || budget <= 0m ? null : (double)((perception.Spent + perception.Reserved) / budget),
+            w.CapBindsFirst ? Theme.Caution : Theme.Text);
         _spent.Foreground = w.CapBindsFirst ? Theme.Caution : Theme.TextMuted;
     }
 

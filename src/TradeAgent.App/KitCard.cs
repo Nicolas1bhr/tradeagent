@@ -31,7 +31,7 @@ sealed class KitCard
         _install.IsVisible = false;
         _chosenValue.IsVisible = false;
         Root = Ui.Section("Head-start kit", Ui.Col(Theme.S4,
-            Ui.KeyValueLive("Installed", _installedValue),
+            Ui.Fact("Installed", _installedValue),
             Ui.Wrap(Theme.S2,
                 Ui.Secondary(Labels.ChooseKitFolder, () => ChooseAsync(folder: true)),
                 Ui.Secondary(Labels.ChooseKitZip, () => ChooseAsync(folder: false)),
