@@ -36,6 +36,9 @@ sealed partial class FloorPage
         public required IReadOnlyList<OrgPositionRow> Positions;
         public required IReadOnlyList<BoardSeat> Board;
         public required OrgNames Names;
+        /// <summary>The tape over the stretch and the two hours before it, where the stretch is short enough to carry it; else null and no tape is shown.</summary>
+        public FloorTapeRead? Tape;
+        public int TapeShown = -1;
         public DateTimeOffset At;
         public DateTimeOffset? NextFounding;
         public int Next;
@@ -133,7 +136,9 @@ sealed partial class FloorPage
         return new Replaying
         {
             From = from, To = now, Turns = floor.Turns(from, now), Events = floor.Events(from, now, 6000, tools: now - from <= TimeSpan.FromHours(3)),
-            Founded = floor.Founded(), Units = units, Positions = positions, Board = _sources.Board(), Names = OrgNames.Of(units, positions)
+            Founded = floor.Founded(), Units = units, Positions = positions, Board = _sources.Board(), Names = OrgNames.Of(units, positions),
+            // The tape goes with a replay of up to a day and a bit; over more, its minutes would be more rows than the rest of the replay.
+            Tape = now - from <= TimeSpan.FromHours(26) ? TapeAt(now, now - from + TapeStretch) : null
         };
     }
 
@@ -217,6 +222,24 @@ sealed partial class FloorPage
         foreach (var gone in _lastTool.Keys.Where(k => !_openSince.ContainsKey(k)).ToList()) _lastTool.Remove(gone);
         _stage.Scene.Lit(_openSince.Keys.ToHashSet(StringComparer.Ordinal), running: true);
         _stage.Scene.Flag(new HashSet<string>());
+
+        // THE TAPE AS IT STOOD: the two hours of minutes ending at the replay's clock. Redrawn only when another minute has passed.
+        var upTo = 0;
+        if (replay.Tape is { } tape)
+        {
+            while (upTo < tape.Bars.Count && tape.Bars[upTo].Open <= replay.At) upTo++;
+            if (upTo != replay.TapeShown)
+            {
+                replay.TapeShown = upTo;
+                var from = replay.At - TapeStretch;
+                _stage.Scene.Tape(Drawn(tape.Symbol, [.. tape.Bars.Take(upTo).Where(b => b.Open > from)], null));
+            }
+        }
+        else if (replay.TapeShown != 0)
+        {
+            replay.TapeShown = 0;
+            _stage.Scene.Tape(null);
+        }
 
         _state.Text = replay.Ended ? Labels.FloorReplayEnded : Labels.FloorReplaying(replay.At);
         _working.Text = Labels.FloorWorking([.. _openSince.OrderBy(o => o.Value).Select(o => FloorWords.Who(o.Key, _names))]);

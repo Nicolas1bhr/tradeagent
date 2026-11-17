@@ -150,6 +150,9 @@ static class Theme
     /// <summary>The left rail's width, the header's height, and the widest a page of words is laid: past it a line is too long to read.</summary>
     public const double RailWidth = 210, HeaderHeight = 56, PageMaxWidth = 1180;
 
+    /// <summary>The widest a page's opening paragraph is set.</summary>
+    public const double LedeMaxWidth = 820;
+
     /// <summary>A rail icon's box, and the weight of its line.</summary>
     public const double IconSize = 17, IconStroke = 1.5;
 

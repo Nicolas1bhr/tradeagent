@@ -337,6 +337,13 @@ sentences, newest first, each with the time it was recorded. Anything an AI wrot
 marks; everything else is TradeAgent's own record. Along the bottom are today's AI turns and spend, the
 tasks open and the deliveries waiting to be judged, the same figures the other pages show.
 
+In front of the organisation lies **the tape**: the last two hours of the minutes TradeAgent has recorded
+for the pair it recorded most lately, each minute's closing price drawn as high as it was against the
+others in those two hours, with the pair and its last close beside the newest end. It is the market's
+price as TradeAgent collected it, nothing the AI did, and it is there whether the AI is running or not.
+If the newest minute is more than a few minutes old the words beside it say how old. With no minutes
+recorded there is no tape.
+
 Point at a cell to see its full name and what it is; press it and the sentences become that position's
 own — what it did and what reached it — until you press **Show everything**. Nothing on this page
 changes anything, with one exception: while the AI is not running it has the same **Start the AI**
@@ -349,7 +356,8 @@ the stretches in which nothing was open. While it plays, the page says it is a r
 and the figures about today are put away; the strip along the top of the window goes on saying what is
 true now. A replay starts nothing and changes nothing: it is a reading of your own records. It draws the
 positions that exist today, each appearing at the moment it was created; a position that has since ended
-is not drawn, though what it did is still in the sentences. **Back to now** ends it, and so does going to
+is not drawn, though what it did is still in the sentences. Over a stretch of up to a day the tape plays
+back with it; over a longer one it is left off. **Back to now** ends it, and so does going to
 another page.
 
 The floor draws itself only while something on it is moving, and if your computer is slow to draw it — a

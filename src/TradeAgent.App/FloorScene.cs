@@ -39,6 +39,12 @@ readonly record struct FloorCamera(float Yaw, float Pitch, float Zoom, Vector2 S
 }
 
 /// <summary>
+/// THE TAPE AS THE FLOOR SHOWS IT: whose prices, each minute's close as a height from 0 (the least of the stretch) to 1 (the most),
+/// oldest first, and the words beside the newest. <see cref="Stale"/>: the newest is older than a tape being recorded would be.
+/// </summary>
+sealed record FloorTape(string Symbol, float[] Heights, string Caption, bool Stale);
+
+/// <summary>
 /// ONE FRAME OF THE FLOOR, ready to paint (<c>U-ui-alive</c>): everything already placed on the screen by the camera, so the painter only
 /// paints. Made on the UI thread, handed to the render thread and never changed after — which is what lets one thread move the floor
 /// while another draws it.
@@ -80,6 +86,14 @@ sealed class FloorFrame
     public Ring[] Rings = [];
     public Spark[] Sparks = [];
 
+    /// <summary>
+    /// The tape: its strip, the foot and the top of the ribbon standing on it (oldest first), the words beside its newest end, and how
+    /// far it has risen. Null where there is no tape to show.
+    /// </summary>
+    public sealed record TapeDraw(Slab Strip, Vector2[] Foot, Vector2[] Top, string Caption, bool Stale, float Born, float Fresh);
+
+    public TapeDraw? Tape;
+
     /// <summary>The owner's place: the ring behind the chief, its word, and how lit it is.</summary>
     public Vector2[] Owner = [];
     public Vector2 OwnerAt;
@@ -106,14 +120,14 @@ sealed class FloorScene
 
     sealed class CellState
     {
-        public float Light, Flash, Born, Mark, Flag;
+        public float Light, Flash, Born, Mark, Flag, Wait;
         public bool Working, Flagged, Seen;
         public FloorTone Tone;
     }
 
     sealed class SlabState
     {
-        public float Born, Rim;
+        public float Born, Rim, Wait;
         public bool Seen;
     }
 
@@ -151,6 +165,8 @@ sealed class FloorScene
     readonly List<Fleck> _flecks = [];
 
     float _time, _asleep = 1, _asleepWanted = 1, _ownerLight;
+    FloorTape? _tape;
+    float _tapeBorn, _tapeFresh;
     float _zoom, _zoomWanted;
     Vector3 _target;
     Vector2 _lean, _leanWanted;
@@ -173,28 +189,49 @@ sealed class FloorScene
         set => _marked = value;
     }
 
-    /// <summary>The chart changed: everything takes its new place. A cell or slab that was not there before grows in where it stands.</summary>
-    public void Lay(FloorPlan plan, bool atOnce)
+    /// <summary>
+    /// The chart changed: everything takes its new place. A cell or slab that was not there before grows in where it stands.
+    /// <paramref name="assembling"/>: the floor is being shown for the first time, and builds itself — the organisation's slab first, then
+    /// each unit on the one that holds it, then the cells on them, a moment apart — instead of simply being there.
+    /// </summary>
+    public void Lay(FloorPlan plan, bool atOnce, bool assembling = false)
     {
         _plan = plan;
+        var levels = plan.Slabs.ToDictionary(s => s.Unit, s => s.Level, StringComparer.Ordinal);
         foreach (var s in _cells.Values) s.Seen = false;
+        var nth = 0;
         foreach (var cell in plan.Cells)
         {
-            if (!_cells.TryGetValue(cell.Id, out var state)) _cells[cell.Id] = state = new CellState { Born = atOnce ? 1 : 0 };
+            if (!_cells.TryGetValue(cell.Id, out var state))
+            {
+                _cells[cell.Id] = state = new CellState { Born = atOnce ? 1 : 0 };
+                if (assembling) state.Wait = 0.35f + levels.GetValueOrDefault(cell.Unit) * 0.22f + nth * 0.045f;
+            }
             state.Seen = true;
+            nth++;
         }
         foreach (var gone in _cells.Where(kv => !kv.Value.Seen).Select(kv => kv.Key).ToList()) _cells.Remove(gone);
 
         foreach (var s in _slabs.Values) s.Seen = false;
+        nth = 0;
         foreach (var slab in plan.Slabs)
         {
-            if (!_slabs.TryGetValue(slab.Unit, out var state)) _slabs[slab.Unit] = state = new SlabState { Born = atOnce ? 1 : 0 };
+            if (!_slabs.TryGetValue(slab.Unit, out var state))
+            {
+                _slabs[slab.Unit] = state = new SlabState { Born = atOnce ? 1 : 0 };
+                if (assembling) state.Wait = slab.Level * 0.22f + nth * 0.03f;
+            }
             state.Seen = true;
+            nth++;
         }
         foreach (var gone in _slabs.Where(kv => !kv.Value.Seen).Select(kv => kv.Key).ToList()) _slabs.Remove(gone);
         _fitted = false;
+        _arriving = assembling;
         Busy = true;
     }
+
+    /// <summary>The floor is being shown for the first time: the camera starts a step back and comes in as it builds.</summary>
+    bool _arriving;
 
     /// <summary>Which cells have a turn open now, and whether the AI is running at all: decides every cell's resting light.</summary>
     public void Lit(IReadOnlySet<string> working, bool running)
@@ -347,17 +384,21 @@ sealed class FloorScene
             // A light comes up faster than it goes down: a turn opening is an event, a turn closing is a settling.
             s.Light = Toward(s.Light, wanted, dt, wanted > s.Light ? 3.2f : 1.1f, ref busy);
             s.Flash = Toward(s.Flash, 0, dt, 1.9f, ref busy);
-            s.Born = Toward(s.Born, 1, dt, 1.5f, ref busy);
+            if (s.Wait > 0) { s.Wait -= dt; busy = true; }
+            else s.Born = Toward(s.Born, 1, dt, 2.6f, ref busy);
             s.Mark = Toward(s.Mark, cell.Id == _marked || s.Working ? 1 : 0, dt, 5f, ref busy);
             s.Flag = Toward(s.Flag, s.Flagged ? 1 : 0, dt, 2.5f, ref busy);
             if (s.Working) breathing = true;
         }
         foreach (var s in _slabs.Values)
         {
-            s.Born = Toward(s.Born, 1, dt, 1.3f, ref busy);
+            if (s.Wait > 0) { s.Wait -= dt; busy = true; }
+            else s.Born = Toward(s.Born, 1, dt, 2.4f, ref busy);
             s.Rim = Toward(s.Rim, 0, dt, 0.9f, ref busy);
         }
         _ownerLight = Toward(_ownerLight, 0, dt, 0.8f, ref busy);
+        _tapeBorn = Toward(_tapeBorn, _tape is null ? 0 : 1, dt, 1.6f, ref busy);
+        _tapeFresh = Toward(_tapeFresh, 0, dt, 0.7f, ref busy);
 
         foreach (var key in _warmth.Keys.ToList())
         {
@@ -398,11 +439,25 @@ sealed class FloorScene
         _lean += (_leanWanted - _lean) * Math.Min(1, dt * 3.5f);
         if (Vector2.DistanceSquared(before, _lean) > 1e-7f) busy = true;
         if (MathF.Abs(_zoom - _zoomWanted) > 0.01f || Vector2.DistanceSquared(_offset, _offsetWanted) > 0.05f) busy = true;
-        _zoom += (_zoomWanted - _zoom) * Math.Min(1, dt * 4f);
+        // Coming in at the start is slow enough to be seen; following a window being resized is quick enough not to be.
+        var follow = _arriving ? 1.3f : 4f;
+        if (_arriving && MathF.Abs(_zoom - _zoomWanted) < 0.05f) _arriving = false;
+        _zoom += (_zoomWanted - _zoom) * Math.Min(1, dt * follow);
         _offset += (_offsetWanted - _offset) * Math.Min(1, dt * 4f);
 
         Busy = busy;
         Breathing = breathing || Motion == FloorMotion.Full;
+    }
+
+    /// <summary>
+    /// The tape to show, or none. A new last minute — the same stretch moved on by one — lights the ribbon's newest end for a moment.
+    /// </summary>
+    public void Tape(FloorTape? tape)
+    {
+        if (tape is null != _tape is null) _fitted = false;                       // the floor is fitted with its tape or without it
+        if (tape is not null && _tape is not null && (tape.Heights.Length != _tape.Heights.Length || tape.Caption != _tape.Caption)) _tapeFresh = 1;
+        if (!Equals(tape, _tape) || tape?.Heights.SequenceEqual(_tape?.Heights ?? []) == false) Busy = true;
+        _tape = tape;
     }
 
     /// <summary>The owner's place lights for a moment: something reached him, or he spoke.</summary>
@@ -442,16 +497,17 @@ sealed class FloorScene
             (_zoomWanted, _offsetWanted) = Fit(clear);
             if (!_fitted || _zoom <= 0)
             {
-                _zoom = _zoomWanted;
+                _zoom = _arriving ? _zoomWanted * 0.9f : _zoomWanted;
                 _offset = _offsetWanted;
             }
             _fitted = true;
         }
-        return new FloorCamera(yaw, pitch, _zoom, _offset, _target, Perspective);
+        // Where the floor's middle falls follows the zoom it is drawn at, so coming in is a move toward the floor and not a slide across it.
+        return new FloorCamera(yaw, pitch, _zoom, _offset + _centre * (_zoomWanted - _zoom), _target, Perspective);
     }
 
     (float, float, float, float) _fitKey;
-    Vector2 _offset, _offsetWanted;
+    Vector2 _offset, _offsetWanted, _centre;
 
     /// <summary>
     /// How near the camera may stand, and where on the stage the floor's middle then falls: the whole floor — every slab's corners and
@@ -484,10 +540,13 @@ sealed class FloorScene
         var middle = new Vector2((clear.L + clear.R) / 2, (clear.T + clear.B) / 2);
         if (_plan.Slabs.Count == 0) return (40, middle);
         Hold(_plan.Owner + new Vector3(0.5f, 0.5f, 0));
+        if (_tape is not null && TapeStrip() is { } strip)
+            foreach (var corner in strip.Corners) Hold(corner);
 
         var zoom = Math.Min((clear.R - clear.L) / Math.Max(0.1f, maxX - minX), (clear.B - clear.T) / Math.Max(0.1f, maxY - minY));
         zoom = Math.Clamp(zoom, 12, 120);
-        return (zoom, middle - new Vector2((minX + maxX) / 2, (minY + maxY) / 2) * zoom);
+        _centre = new Vector2((minX + maxX) / 2, (minY + maxY) / 2);
+        return (zoom, middle - _centre * zoom);
     }
 
     static IEnumerable<Vector3> Corners(Vector3 min, Vector3 max)
@@ -581,6 +640,29 @@ sealed class FloorScene
             frame.OwnerWord = ownerWord;
         }
 
+        // THE TAPE: a strip in front of the organisation, and on it each minute's close standing as high as it was.
+        if (_tape is { Heights.Length: > 1 } tape && TapeStrip() is { } lies && _tapeBorn > 0.01f)
+        {
+            var born = Ease(_tapeBorn);
+            var z1 = FloorPlan.Step * born;
+            Vector2 P(Vector3 p, float z) => cam.Point(p with { Z = z });
+            var c = lies.Corners;
+            // It faces the camera squarely, so its two ends are seen edge on: it has a top and a front, and no side to draw.
+            var strip = new FloorFrame.Slab([P(c[0], z1), P(c[1], z1), P(c[2], z1), P(c[3], z1)], [P(c[0], 0), P(c[1], 0), P(c[1], z1), P(c[0], z1)], [],
+                0, false, true, born, 0, []);
+            var n = tape.Heights.Length;
+            Vector3 from = Vector3.Lerp(Vector3.Lerp(c[0], c[3], 0.42f), Vector3.Lerp(c[1], c[2], 0.42f), 0.03f),
+                to = Vector3.Lerp(Vector3.Lerp(c[0], c[3], 0.42f), Vector3.Lerp(c[1], c[2], 0.42f), 0.97f);
+            Vector2[] foot = new Vector2[n], top = new Vector2[n];
+            for (var i = 0; i < n; i++)
+            {
+                var at = Vector3.Lerp(from, to, i / (float)(n - 1));
+                foot[i] = P(at, z1);
+                top[i] = P(at, z1 + (0.1f + 0.86f * Math.Clamp(tape.Heights[i], 0, 1)) * born);
+            }
+            frame.Tape = new FloorFrame.TapeDraw(strip, foot, top, tape.Caption, tape.Stale, born, _tapeFresh);
+        }
+
         // WHAT IS TRAVELLING.
         var flights = new List<FloorFrame.Flight>();
         foreach (var t in _travels)
@@ -644,6 +726,30 @@ sealed class FloorScene
             points.Add(cam.Point(new Vector3(slab.X1, y, slab.Z1)));
         }
         return [.. points];
+    }
+
+    /// <summary>
+    /// WHERE THE TAPE LIES: a strip in front of the organisation's slab, off it — the market is no part of the organisation — and
+    /// squared to where the floor is looked at from, not to the floor's own lines. So its length runs level across the screen, and a
+    /// price that rose is drawn rising: on a strip laid along the organisation's slanted edge, a rising market would be drawn as a line
+    /// going down. Its corners (near-left, near-right, far-right, far-left) and its two directions; null on an empty floor.
+    /// </summary>
+    (Vector3[] Corners, Vector3 Along, Vector3 Away)? TapeStrip()
+    {
+        if (_plan.Ground is not { } ground) return null;
+        float cy = MathF.Cos(BaseYaw), sy = MathF.Sin(BaseYaw);
+        Vector3 along = new(cy, sy, 0), away = new(-sy, cy, 0);
+        float left = float.MaxValue, right = float.MinValue, nearest = float.MaxValue;
+        foreach (var corner in (Vector3[])[new(ground.X0, ground.Y0, 0), new(ground.X1, ground.Y0, 0), new(ground.X1, ground.Y1, 0), new(ground.X0, ground.Y1, 0)])
+        {
+            left = Math.Min(left, Vector3.Dot(corner, along));
+            right = Math.Max(right, Vector3.Dot(corner, along));
+            nearest = Math.Min(nearest, Vector3.Dot(corner, away));
+        }
+        const float deep = 0.62f, gap = 0.22f;
+        var inset = (right - left) * 0.13f;
+        float a0 = left + inset, a1 = right - inset, far = nearest - gap, near = far - deep;
+        return ([along * a0 + away * near, along * a1 + away * near, along * a1 + away * far, along * a0 + away * far], along, away);
     }
 
     static Vector3 At(Travel t, float along)

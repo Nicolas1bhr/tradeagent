@@ -26,6 +26,13 @@ public static partial class Labels
     public const string FloorBoard = "Security board";
     public const string FloorOwner = "You";
     public const string FloorReferee = "The referee";
+    /// <summary>What stands beside the tape's newest end: whose prices and the last minute's close.</summary>
+    public static string FloorTapeCaption(string symbol, decimal close) =>
+        symbol + "  " + close.ToString("#,0.########", CultureInfo.InvariantCulture);
+
+    /// <summary>The same, where the newest minute is older than a tape being recorded would be: it says how old.</summary>
+    public static string FloorTapeStale(string symbol, decimal close, TimeSpan age) =>
+        FloorTapeCaption(symbol, close) + "  ·  last recorded " + FloorSpan(age) + " ago";
 
     /// <summary>A security-board seat's name on the floor: its number, from its id.</summary>
     public static string FloorBoardSeat(string id) =>

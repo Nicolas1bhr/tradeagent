@@ -108,9 +108,15 @@ sealed class FloorStage : Control
         Draw(Stopwatch.GetTimestamp());
     }
 
+    /// <summary>
+    /// Set by a host that steps the floor itself (<see cref="Step"/>): the stage then keeps no frame clock of its own, so the floor
+    /// moves exactly as far as that host steps it and no further.
+    /// </summary>
+    internal bool Stepped { get; set; }
+
     void Pump()
     {
-        if (_pumping || !_shown || !IsEffectivelyVisible) return;
+        if (_pumping || !_shown || !IsEffectivelyVisible || Stepped) return;
         if (TopLevel.GetTopLevel(this) is not { } top) return;
         _pumping = true;
         top.RequestAnimationFrame(Tick);

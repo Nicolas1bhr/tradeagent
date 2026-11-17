@@ -291,6 +291,37 @@ public class FloorTests
         }
     }
 
+    [Fact]
+    public void The_tape_is_drawn_level_and_as_high_as_each_minute_closed_and_not_at_all_where_there_is_none()
+    {
+        var scene = new FloorScene { Motion = FloorMotion.Calm };
+        scene.Lay(new FloorPlan(Chart().Chart), atOnce: true);
+        (float, float, float, float) clear = (20, 20, 980, 680);
+        Run(scene, 2);
+        Assert.Null(scene.Frame(1000, 700, clear, "").Tape);                              // no minutes recorded: no tape, and nothing made up
+
+        scene.Tape(new FloorTape("BTCUSDT", [0f, 0.5f, 1f, 0.25f], "BTCUSDT  118", Stale: false));
+        scene.Frame(1000, 700, clear, "");
+        Run(scene, 5);
+        var tape = scene.Frame(1000, 700, clear, "").Tape!;
+        Assert.Equal("BTCUSDT  118", tape.Caption);
+
+        // LEVEL ACROSS THE SCREEN, whatever angle the organisation's own slab lies at: a price that rose is drawn rising, never as a
+        // line going down a slope.
+        Assert.Equal(tape.Foot[0].Y, tape.Foot[^1].Y, 0);
+        Assert.True(tape.Foot[^1].X > tape.Foot[0].X + 100);
+        // EACH MINUTE AS HIGH AS IT CLOSED: the highest close stands highest, the lowest lowest, and the order is the minutes' own.
+        float[] rise = [.. tape.Top.Select((p, i) => tape.Foot[i].Y - p.Y)];
+        Assert.True(rise[2] > rise[1] && rise[1] > rise[3] && rise[3] > rise[0] && rise[0] > 0, string.Join(", ", rise));
+        // And the whole of it is inside the part of the stage left clear, with the floor.
+        Assert.All(tape.Strip.Top.Concat(tape.Top), p => { Assert.InRange(p.X, clear.Item1 - 1, clear.Item3 + 1); Assert.InRange(p.Y, clear.Item2 - 1, clear.Item4 + 1); });
+
+        // IT GOES when there is no longer one to show.
+        scene.Tape(null);
+        Run(scene, 5);
+        Assert.Null(scene.Frame(1000, 700, clear, "").Tape);
+    }
+
     // ---- the words --------------------------------------------------------------------------------------------------------------
 
     static FloorEvent E(string kind, string actor) => new(T0.AddHours(1), kind, actor);
@@ -396,6 +427,8 @@ public class FloorTests
         Assert.Equal("2:05", Labels.FloorClock(TimeSpan.FromSeconds(125)));
         Assert.Equal("1:02:03", Labels.FloorClock(new TimeSpan(1, 2, 3)));
 
+        Assert.Equal("BTCUSDT  97,412.5", Labels.FloorTapeCaption("BTCUSDT", 97412.50m));
+        Assert.Equal("BTCUSDT  0.00001234  ·  last recorded 40 min ago", Labels.FloorTapeStale("BTCUSDT", 0.00001234m, TimeSpan.FromMinutes(40)));
         Assert.Equal("Next turn: Chief, due now.", Labels.FloorNext("Chief", TimeSpan.FromSeconds(-30)));
         Assert.Equal("Next turn: Chief, in 12 min.", Labels.FloorNext("Chief", TimeSpan.FromMinutes(12.5)));
         Assert.Equal(Labels.FloorNobodyWorking, Labels.FloorWorking([]));

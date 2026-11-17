@@ -85,6 +85,7 @@ static class FloorPaint
         Lines(canvas, f);
         foreach (var name in f.Names) Name(canvas, name);
         Owner(canvas, f);
+        if (f.Tape is { } tape) Tape(canvas, tape, full);
 
         // Light on the floor first, so every cell stands in it.
         foreach (var cell in f.Cells) Glow(canvas, cell, f);
@@ -136,7 +137,7 @@ static class FloorPaint
         using var paint = new SKPaint { IsAntialias = true };
         using var topPath = Poly(slab.Top);
         using var frontPath = Poly(slab.Front);
-        using var sidePath = Poly(slab.Side);
+        using var sidePath = Poly(slab.Side);                    // empty for a strip seen end on
 
         if (full && slab.Level == 0)
         {
@@ -232,6 +233,68 @@ static class FloorPaint
         canvas.Concat(in matrix);
         canvas.DrawText(name.Text, 0, 0, SKTextAlign.Left, font, paint);
         canvas.Restore();
+    }
+
+    /// <summary>
+    /// The tape: the minutes TradeAgent recorded, each one's close standing on a strip in front of the organisation — a ribbon whose top
+    /// edge is the price. Drawn in the grey of the app's own words, never in the light's colour and never in green or red: it is the
+    /// market, not the AI, and it is neither a profit nor a loss.
+    /// </summary>
+    static void Tape(SKCanvas canvas, FloorFrame.TapeDraw tape, bool full)
+    {
+        Slab(canvas, tape.Strip, false);
+        var n = tape.Top.Length;
+        if (n < 2) return;
+        using var ribbon = new SKPath();
+        ribbon.MoveTo(P(tape.Foot[0]));
+        for (var i = 1; i < n; i++) ribbon.LineTo(P(tape.Foot[i]));
+        for (var i = n - 1; i >= 0; i--) ribbon.LineTo(P(tape.Top[i]));
+        ribbon.Close();
+        float high = float.MaxValue, low = float.MinValue;
+        foreach (var p in tape.Top) high = Math.Min(high, p.Y);
+        foreach (var p in tape.Foot) low = Math.Max(low, p.Y);
+        var line = tape.Stale ? Faint : new SKColor(0xD8, 0xDD, 0xE8);
+
+        using var paint = new SKPaint { IsAntialias = true };
+        paint.Shader = SKShader.CreateLinearGradient(new SKPoint(0, high), new SKPoint(0, low), [A(line, 0.26f * tape.Born), A(line, 0.02f * tape.Born)], null,
+            SKShaderTileMode.Clamp);
+        canvas.DrawPath(ribbon, paint);
+        paint.Shader.Dispose();
+        paint.Shader = null;
+
+        using var edge = Poly(tape.Top, close: false);
+        paint.Style = SKPaintStyle.Stroke;
+        paint.StrokeJoin = SKStrokeJoin.Round;
+        paint.StrokeCap = SKStrokeCap.Round;
+        paint.StrokeWidth = 1.5f;
+        paint.Color = A(line, 0.92f * tape.Born);
+        canvas.DrawPath(edge, paint);
+
+        // Its newest end: where the tape is being written. A moment brighter each time a minute lands.
+        var newest = P(tape.Top[^1]);
+        paint.Style = SKPaintStyle.Fill;
+        if (!tape.Stale)
+        {
+            var reach = 7 + 9 * tape.Fresh;
+            paint.BlendMode = SKBlendMode.Plus;
+            paint.Shader = SKShader.CreateRadialGradient(newest, reach, [A(SKColors.White, (0.5f + 0.5f * tape.Fresh) * tape.Born), A(SKColors.White, 0)], null,
+                SKShaderTileMode.Clamp);
+            canvas.DrawCircle(newest, reach, paint);
+            paint.Shader.Dispose();
+            paint.Shader = null;
+            paint.BlendMode = SKBlendMode.SrcOver;
+        }
+        paint.Color = A(line, tape.Born);
+        canvas.DrawCircle(newest, 2.2f, paint);
+
+        if (tape.Caption.Length == 0) return;
+        using var font = new SKFont(_medium ?? SKTypeface.Default, 11.5f) { Subpixel = true, Edging = SKFontEdging.Antialias };
+        using var words = new SKPaint { IsAntialias = true, Color = A(tape.Stale ? Caution[2] : Muted, tape.Born) };
+        // Beside the newest end; where the stage's edge is too near for that, above it and ending where it does.
+        var wide = font.MeasureText(tape.Caption);
+        var clip = canvas.LocalClipBounds;
+        if (newest.X + 10 + wide <= clip.Right - 6) canvas.DrawText(tape.Caption, newest.X + 10, newest.Y + 4, SKTextAlign.Left, font, words);
+        else canvas.DrawText(tape.Caption, newest.X, high - 9, SKTextAlign.Right, font, words);
     }
 
     static void Owner(SKCanvas canvas, FloorFrame f)
