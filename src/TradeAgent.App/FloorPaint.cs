@@ -75,11 +75,26 @@ static class FloorPaint
     public static void Paint(SKCanvas canvas, FloorFrame f)
     {
         var full = f.Motion == FloorMotion.Full;
-        var awake = 1 - f.Asleep;
         canvas.Save();
         canvas.ClipRect(new SKRect(0, 0, f.Width, f.Height));
         canvas.Clear(Bg);
+        if (f.Glass.Length == 0) Scene(canvas, f, full);
+        else
+        {
+            // THE FLOOR IS DRAWN ONCE AND SHOWN AS OFTEN AS THE GLASS NEEDS IT: behind every pane it is seen again, out of focus and
+            // bent at the pane's rim. Recorded once, so a pane costs the painting and never the working-out.
+            using var recorder = new SKPictureRecorder();
+            Scene(recorder.BeginRecording(new SKRect(0, 0, f.Width, f.Height)), f, full);
+            using var floor = recorder.EndRecording();
+            canvas.DrawPicture(floor);
+            foreach (var pane in f.Glass) Glass(canvas, f, floor, pane, full);
+        }
+        canvas.Restore();
+    }
 
+    static void Scene(SKCanvas canvas, FloorFrame f, bool full)
+    {
+        var awake = 1 - f.Asleep;
         Pool(canvas, f, awake);
         foreach (var slab in f.Slabs) Slab(canvas, slab, full);
         Lines(canvas, f);
@@ -98,7 +113,133 @@ static class FloorPaint
             if (flight.Air) Flight(canvas, flight);
         foreach (var spark in f.Sparks) Spark(canvas, spark);
         foreach (var cell in f.Cells) Marks(canvas, cell);
+    }
+
+    /// <summary>
+    /// A PANE OF GLASS OVER THE FLOOR (<c>U-ui-world</c>): everything the window lays over the floor — a sheet, the dock, the status —
+    /// is glass, and the glass is drawn here, by the floor's own painter, because glass is made of what is behind it.
+    ///
+    /// <para>Through the body of a pane the floor is seen out of focus with its colour deepened, so a cell that is lit behind the glass
+    /// glows through it and the words on the pane are still read on something calm. Along the rim the glass is thicker, and bends what
+    /// is behind it: the floor is drawn there a little larger than it is, as an edge of real glass shows it. The rim itself catches the
+    /// light — brightest where it faces up and to the left — and the pane lays a soft shadow on the floor under it. Where the pointer
+    /// is over a pane, the pane is a little lighter round it.</para>
+    ///
+    /// <para>On a machine that draws without a graphics card the floor is not drawn again: the pane is the window's own dark, nearly
+    /// whole, with its rim.</para>
+    /// </summary>
+    static void Glass(SKCanvas canvas, FloorFrame f, SKPicture floor, in FloorFrame.Pane pane, bool full)
+    {
+        var strength = Math.Clamp(pane.Strength, 0, 1);
+        if (strength <= 0.01f || pane.Width < 2 || pane.Height < 2) return;
+        var rect = new SKRect(pane.X, pane.Y, pane.X + pane.Width, pane.Y + pane.Height);
+        var radius = Math.Min(pane.Radius, Math.Min(pane.Width, pane.Height) / 2);
+        using var round = new SKRoundRect(rect, radius, radius);
+
+        // ITS SHADOW ON THE FLOOR: under it and a little below, soft.
+        if (full)
+        {
+            using var shade = new SKPaint { IsAntialias = true, Color = A(SKColors.Black, 0.42f * strength), MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 18) };
+            canvas.Save();
+            canvas.ClipRoundRect(round, SKClipOperation.Difference, true);
+            using var cast = new SKRoundRect(SKRect.Create(rect.Left + 2, rect.Top + 10, rect.Width - 4, rect.Height), radius, radius);
+            canvas.DrawRoundRect(cast, shade);
+            canvas.Restore();
+        }
+
+        canvas.Save();
+        canvas.ClipRoundRect(round, SKClipOperation.Intersect, true);
+        if (full)
+        {
+            // THE BODY: the floor out of focus, its colour deepened.
+            using var blur = SKImageFilter.CreateBlur(GlassBlur, GlassBlur);
+            using var deepen = SKColorFilter.CreateColorMatrix(Saturate(1.75f, 1.18f));
+            using var body = new SKPaint { ImageFilter = blur, ColorFilter = deepen, Color = SKColors.White.WithAlpha((byte)(255 * strength)) };
+            canvas.SaveLayer(rect, body);
+            canvas.DrawPicture(floor);
+            canvas.Restore();
+
+            // THE RIM, WHERE THE GLASS IS THICK: the floor again, larger than it is and nearly sharp, in a band along the edge.
+            var band = Math.Min(GlassRim, Math.Min(pane.Width, pane.Height) / 2 - 1);
+            if (band > 3)
+            {
+                var inner = rect;
+                inner.Inflate(-band, -band);
+                using var innerRound = new SKRoundRect(inner, Math.Max(0, radius - band), Math.Max(0, radius - band));
+                canvas.Save();
+                canvas.ClipRoundRect(innerRound, SKClipOperation.Difference, true);
+                using var soft = SKImageFilter.CreateBlur(3.5f, 3.5f);
+                using var bent = new SKPaint { ImageFilter = soft, ColorFilter = deepen, Color = SKColors.White.WithAlpha((byte)(255 * strength)) };
+                canvas.SaveLayer(rect, bent);
+                canvas.Scale(GlassLens, GlassLens, rect.MidX, rect.MidY);
+                canvas.DrawPicture(floor);
+                canvas.Restore();
+                canvas.Restore();
+            }
+        }
+
+        // THE GLASS'S OWN BODY: the window's dark, thin enough that light behind it comes through, and a breath of light from above.
+        using var veil = new SKPaint { IsAntialias = true };
+        var dark = full ? 0.46f : 0.96f;
+        veil.Shader = SKShader.CreateLinearGradient(new SKPoint(rect.Left, rect.Top), new SKPoint(rect.Left, rect.Bottom),
+            [A(new SKColor(0x1A, 0x1E, 0x2C), dark * strength), A(new SKColor(0x0B, 0x0D, 0x12), Math.Min(1, dark + 0.16f) * strength)], [0, 1],
+            SKShaderTileMode.Clamp);
+        canvas.DrawRect(rect, veil);
+        veil.Shader.Dispose();
+        veil.Shader = SKShader.CreateLinearGradient(new SKPoint(rect.Left, rect.Top), new SKPoint(rect.Left, rect.Top + Math.Min(rect.Height, 220)),
+            [A(SKColors.White, 0.075f * strength), A(SKColors.White, 0.018f * strength)], [0, 1], SKShaderTileMode.Clamp);
+        canvas.DrawRect(rect, veil);
+        veil.Shader.Dispose();
+        veil.Shader = null;
+
+        // WHERE THE POINTER IS, the glass is lit a little: light on a surface, moving as the hand moves.
+        if (full && f.Pointer is { } at && rect.Contains(at.X, at.Y))
+        {
+            veil.Shader = SKShader.CreateRadialGradient(new SKPoint(at.X, at.Y), GlassPointer,
+                [A(SKColors.White, 0.07f * strength), A(SKColors.White, 0)], [0, 1], SKShaderTileMode.Clamp);
+            canvas.DrawRect(rect, veil);
+            veil.Shader.Dispose();
+            veil.Shader = null;
+        }
+
+        // INSIDE THE RIM: a soft line of light just under the top edge, the way a thick edge holds it.
+        using var glow = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 2.2f, MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 2.2f) };
+        glow.Shader = SKShader.CreateLinearGradient(new SKPoint(rect.Left, rect.Top), new SKPoint(rect.Left, rect.Top + Math.Min(rect.Height, 90)),
+            [A(SKColors.White, 0.26f * strength), A(SKColors.White, 0)], [0, 1], SKShaderTileMode.Clamp);
+        var within = rect;
+        within.Inflate(-1.6f, -1.6f);
+        using var withinRound = new SKRoundRect(within, Math.Max(0, radius - 1.6f), Math.Max(0, radius - 1.6f));
+        canvas.DrawRoundRect(withinRound, glow);
+        glow.Shader.Dispose();
         canvas.Restore();
+
+        // THE RIM ITSELF: a hairline that is bright where it faces the light — up and to the left — and faint where it turns away.
+        using var edge = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1 };
+        edge.Shader = SKShader.CreateLinearGradient(new SKPoint(rect.Left, rect.Top), new SKPoint(rect.Right, rect.Bottom),
+            [A(SKColors.White, 0.46f * strength), A(SKColors.White, 0.10f * strength), A(SKColors.White, 0.05f * strength), A(SKColors.White, 0.20f * strength)],
+            [0, 0.3f, 0.7f, 1], SKShaderTileMode.Clamp);
+        var inset = rect;
+        inset.Inflate(-0.5f, -0.5f);
+        using var line = new SKRoundRect(inset, Math.Max(0, radius - 0.5f), Math.Max(0, radius - 0.5f));
+        canvas.DrawRoundRect(line, edge);
+        edge.Shader.Dispose();
+    }
+
+    /// <summary>How far out of focus the floor is behind a pane, how wide the band along a pane's rim is, how much larger the floor is drawn in it, and how far the light round the pointer reaches.</summary>
+    const float GlassBlur = 26, GlassRim = 13, GlassLens = 1.07f, GlassPointer = 260;
+
+    /// <summary>A colour matrix that deepens colour by <paramref name="s"/> and lifts it by <paramref name="gain"/>: what is lit behind glass glows through it.</summary>
+    static float[] Saturate(float s, float gain)
+    {
+        const float r = 0.2126f, g = 0.7152f, b = 0.0722f;
+        float a = (1 - s) * r, c = (1 - s) * g, d = (1 - s) * b;
+        return
+        [
+            (a + s) * gain, c * gain, d * gain, 0, 0,
+            a * gain, (c + s) * gain, d * gain, 0, 0,
+            a * gain, c * gain, (d + s) * gain, 0, 0,
+            0, 0, 0, 1, 0
+        ];
     }
 
     /// <summary>The floor itself: nothing but a pool of faint light under the organisation, so it stands on something and not in a void.</summary>

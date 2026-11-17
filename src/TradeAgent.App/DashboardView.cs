@@ -24,14 +24,16 @@ namespace TradeAgent.App;
 /// </summary>
 static class Pages
 {
+    /// <summary>A page's name, large and light, and under it what the page is, no wider than it reads.</summary>
     public static Control Header(string title, string subtitle) =>
-        Ui.With(Ui.Col(Theme.S1, Ui.H1(title), Ui.With(Ui.Muted(subtitle), t =>
+        Ui.With(Ui.Col(Theme.S2, Ui.With(Ui.Hero(title), t => { t.FontSize = Theme.Title; t.LineHeight = Theme.TitleLine; t.LetterSpacing = Theme.TitleTracking; }),
+            Ui.With(Ui.Muted(subtitle), t =>
             {
                 // A line of words is read, not scanned: no wider than a reader's eye crosses comfortably, however wide the window is.
                 t.MaxWidth = Theme.LedeMaxWidth;
                 t.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left;
             })),
-            c => c.Margin = new Thickness(0, 0, 0, Theme.S6));
+            c => c.Margin = new Thickness(0, 0, Theme.S8, Theme.S8));
 
     /// <summary>A scrolling page body with room for the scrollbar to sit outside the content.</summary>
     public static ScrollViewer Scroll(Control content) => new()

@@ -51,7 +51,8 @@ static class UiTestHome
 /// </summary>
 public class OwnerPagesRenderTests(ITestOutputHelper output)
 {
-    const double Rail = 211, Header = 56;
+    /// <summary>The height the status glass takes above the sheet, and the dock below it, in the window (MainWindow's rows).</summary>
+    const double StatusBand = 62, DockBand = 62;
 
     public static readonly TheoryData<int, int> Sizes = new() { { 1280, 800 }, { 1920, 1080 } };
 
@@ -138,7 +139,7 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
     /// <summary>Every visible card (the theme's elevated border) whose content is a panel with nothing visible in it.</summary>
     static IEnumerable<string> BlankCardsIn(Control page) =>
         page.GetSelfAndVisualDescendants().OfType<Border>()
-            .Where(b => b.IsEffectivelyVisible && ReferenceEquals(b.Background, Theme.BgElevated) && b.Child is Panel p
+            .Where(b => b.IsEffectivelyVisible && b.Classes.Contains("card") && b.Child is Panel p
                         && !p.Children.Any(k => k.IsVisible))
             .Select(b => $"a card is drawn with nothing in it, {b.Bounds.Width:0}x{b.Bounds.Height:0}");
 
@@ -180,7 +181,7 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
                     var win = Framed(page, width, height);
                     win.Show();
                     win.UpdateLayout();
-                    overflow = OverflowIn(page, win, width - Theme.S6);
+                    overflow = OverflowIn(page, win, Pixels(page, win).Right);
                     overflow.AddRange(BlankCardsIn(page));
                     var shown = page.GetSelfAndVisualDescendants().OfType<Control>().Where(c => c.IsEffectivelyVisible).ToList();
                     texts = [.. shown.OfType<TextBlock>().Select(t => t.Text ?? "").Where(t => t.Length > 0)];
@@ -200,7 +201,7 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
                                      .Where(x => x.IsEffectivelyVisible && x.IsEnabled && x.Tag?.GetType().Name == "ConfirmState").ToList())
                             two.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
                         win.UpdateLayout();
-                        overflow.AddRange(OverflowIn(page, win, width - Theme.S6).Select(o => "armed: " + o));
+                        overflow.AddRange(OverflowIn(page, win, Pixels(page, win).Right).Select(o => "armed: " + o));
                         // The armed sentences are words the owner reads too (U-owner-words-2): kept with the page's texts.
                         texts.AddRange(page.GetSelfAndVisualDescendants().OfType<Control>().Where(c => c.IsEffectivelyVisible).OfType<TextBlock>()
                             .Select(t => t.Text ?? "").Where(t => t.Length > 0 && !texts.Contains(t)));
@@ -225,14 +226,21 @@ public class OwnerPagesRenderTests(ITestOutputHelper output)
         finally { host.Gateway.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
     }
 
+    /// <summary>
+    /// THE WINDOW'S FRAME ROUND A PAGE (<c>U-ui-world</c>): the page on the window's own sheet (<see cref="Sheet"/>, at the width
+    /// <see cref="Sheet.WidthIn"/> gives it in a window this wide), the sheet arrived, with the band the status glass takes above it
+    /// and the dock's below. The floor behind is not drawn here: what these rows measure is the page.
+    /// </summary>
     static Window Framed(Control page, int width, int height)
     {
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions($"{Rail},*"), RowDefinitions = new RowDefinitions($"{Header},*") };
-        grid.Children.Add(new Border { Background = Theme.BgRail, [Grid.RowSpanProperty] = 2 });
-        grid.Children.Add(new Border { Background = Theme.BgElevated, [Grid.ColumnProperty] = 1 });
+        var sheet = new Sheet(() => { });
         page.IsVisible = true;
-        // The window's page host: a padded border beside the rail (MainWindow.Build's body).
-        grid.Children.Add(new Border { Padding = new Thickness(Theme.S6), Child = page, [Grid.ColumnProperty] = 1, [Grid.RowProperty] = 1 });
+        sheet.Host.Children.Add(page);
+        sheet.Root.Width = Sheet.WidthIn(width);
+        sheet.Root.Background = Theme.Solid;
+        sheet.Root[Grid.RowProperty] = 1;
+        sheet.Show(true);
+        var grid = new Grid { RowDefinitions = new RowDefinitions($"{StatusBand},*,{DockBand}"), Children = { sheet.Root } };
         return new Window { Width = width, Height = height, Background = Theme.Bg, Content = grid };
     }
 

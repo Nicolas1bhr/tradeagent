@@ -3,23 +3,46 @@ using System.Globalization;
 namespace TradeAgent.Core;
 
 /// <summary>
-/// THE WORDS OF THE FLOOR AND OF THE RAIL'S GROUPS (<c>U-ui-alive</c>). Spelled once, so the page, a test and a sentence cannot drift
+/// THE WORDS OF THE FLOOR AND OF THE WINDOW'S PLACES (<c>U-ui-alive</c>, <c>U-ui-world</c>). Spelled once, so the page, a test and a sentence cannot drift
 /// apart. The floor is the organisation drawn as a place: every seat a cell, lit while its turn is open. Every sentence here is said of a
 /// row the app wrote; none of them says more than the row does. What a model or the owner wrote is only ever shown inside
 /// <see cref="FloorQuote"/>'s marks, so no such text can go on sounding like the app.
 /// </summary>
 public static partial class Labels
 {
-    // ---- the rail ---------------------------------------------------------------------------------------------------------------
+    // ---- the floor's name ---------------------------------------------------------------------------------------------------------
 
-    /// <summary>The rail entry and the page's title. Not "Live": in this app that word means real money, and this page is not that.</summary>
+    /// <summary>The place's name in the dock. Not "Live": in this app that word means real money, and this page is not that.</summary>
     public const string NavFloor = "The floor";
 
-    public const string RailOrganisation = "The organisation";
-    public const string RailTrading = "Trading";
-    public const string RailYours = "You and the AI";
-    public const string RailSystem = "This computer";
-    public const string RailPrivate = "Yours alone";
+    // ---- the places (U-ui-world): the window is one picture, and every page is found at the thing it is about ------------------------
+
+    /// <summary>The floor's own leaf: the whole organisation, with no sheet over it.</summary>
+    public const string PlaceOverview = "Overview";
+    public const string PlaceTalk = "Talk";
+    public const string PlaceDesk = "The desk";
+    public const string PlaceBoard = "The board";
+    public const string PlaceYours = "Yours";
+    public const string PlaceMachine = "The machine";
+
+    public const string PlaceFloorSays = "The organisation itself: who is working, what crosses between them, and what it costs.";
+    public const string PlaceTalkSays = "Your conversation with the AI.";
+    public const string PlaceDeskSays = "Where the organisation meets the market: what is running now, and each day's report.";
+    public const string PlaceBoardSays = "The security board's decisions in force.";
+    public const string PlaceYoursSays = "What only you decide, what reached you, what you hand the AI, and your private line.";
+    public const string PlaceMachineSays = "What the floor stands on: this computer's parts, what TradeAgent did, and the market data.";
+
+    /// <summary>The search over every page and every press, and what it says before anything is typed and when nothing matches.</summary>
+    public const string FindPress = "Find";
+    public const string FindPrompt = "Find a page or a button";
+    public const string FindNothing = "Nothing in TradeAgent is called that.";
+    /// <summary>What a found press says under its own words: the page it is on.</summary>
+    public static string FindOnPage(string page) => $"on the {page} page";
+    /// <summary>What a found page says under its own name: the place it is a leaf of.</summary>
+    public static string FindInPlace(string place) => $"in {place}";
+
+    /// <summary>The press that puts a sheet away and gives the floor the whole window back.</summary>
+    public const string SheetClose = "Back to the floor";
 
     // ---- what stands on the floor -----------------------------------------------------------------------------------------------
 

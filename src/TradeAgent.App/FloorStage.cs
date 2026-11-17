@@ -32,6 +32,23 @@ sealed class FloorStage : Control
     public Func<Size, (float L, float T, float R, float B)> Clear { get; set; } =
         size => (32, 32, (float)size.Width - 32, (float)size.Height - 32);
 
+    /// <summary>The panes of glass the window lays over the stage this instant (<see cref="FloorFrame.Pane"/>): asked for every frame.</summary>
+    public Func<FloorFrame.Pane[]>? Glass { get; set; }
+
+    Vector2? _pointerOnGlass;
+
+    /// <summary>
+    /// The pointer moved over the window's glass (stage coordinates), or left it (null): the pane under it is lit a little round it.
+    /// Only where the frames are free — on a machine that draws without a graphics card the glass is not lit, and nothing is redrawn.
+    /// </summary>
+    public void PointerOnGlass(Vector2? at)
+    {
+        if (Scene.Motion != FloorMotion.Full) at = null;
+        if (at == _pointerOnGlass) return;
+        _pointerOnGlass = at;
+        Wake();
+    }
+
     /// <summary>The word beside the owner's place.</summary>
     public string OwnerWord { get; set; } = "";
 
@@ -170,6 +187,8 @@ sealed class FloorStage : Control
         var size = Bounds.Size;
         if (size.Width < 4 || size.Height < 4) return;
         _frame = Scene.Frame((float)size.Width, (float)size.Height, Clear(size), OwnerWord);
+        if (Glass is { } glass) _frame.Glass = glass();
+        _frame.Pointer = _pointerOnGlass;
         Frames++;
         Framed?.Invoke(_frame);
         InvalidateVisual();

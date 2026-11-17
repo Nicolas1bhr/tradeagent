@@ -407,8 +407,9 @@ sealed class OwnerPage
     }
 
     /// <summary>
-    /// The emergency toggle as this page wears it: the one saturated fill in the app, red while the AI may trade, green while it may not,
-    /// and red again the moment RESUME is half-pressed. The fill is a local brush, so it is registered rather than assigned.
+    /// The emergency toggle as this page wears it: red light in the glass while the AI may trade, green while it may not, and red
+    /// again the moment RESUME is half-pressed. Light, never a slab of colour: its words are what is read. The fill is a local
+    /// brush, so it is registered rather than assigned.
     /// </summary>
     internal static Button BuildKillSwitch(Func<bool> stopped, Action stop, Action resume)
     {
@@ -417,8 +418,10 @@ sealed class OwnerPage
         {
             // THE FOREGROUND IS PART OF THE REPAINT, NOT JUST THE FILL: arming swaps to the "danger" class, whose red foreground on this
             // red fill read as a blank red block on the running app.
-            btn.Background = armed || !stopped() ? Theme.Danger : Theme.Positive;
-            btn.Foreground = Theme.TextOnEmergency;
+            var red = armed || !stopped();
+            btn.Background = red ? Theme.DangerSoft : Theme.PositiveSoft;
+            btn.BorderBrush = red ? Theme.DangerLine : Theme.PositiveLine;
+            btn.Foreground = red ? Theme.DangerText : Theme.Positive;
         });
         return b;
     }

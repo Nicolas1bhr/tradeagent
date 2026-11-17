@@ -39,6 +39,11 @@ readonly record struct FloorCamera(float Yaw, float Pitch, float Zoom, Vector2 S
 }
 
 /// <summary>
+/// ONE PART OF THE FLOOR, and the angle it is looked at from: the box (least and most of each axis) a camera frames when it goes there.
+/// </summary>
+readonly record struct FloorLook(Vector3 Min, Vector3 Max, float Yaw, float Pitch);
+
+/// <summary>
 /// THE TAPE AS THE FLOOR SHOWS IT: whose prices, each minute's close as a height from 0 (the least of the stretch) to 1 (the most),
 /// oldest first, and the words beside the newest. <see cref="Stale"/>: the newest is older than a tape being recorded would be.
 /// </summary>
@@ -95,6 +100,14 @@ sealed class FloorFrame
     public TapeDraw? Tape;
 
     /// <summary>The owner's place: the ring behind the chief, its word, and how lit it is.</summary>
+    /// <summary>A pane of glass over the floor: where a sheet of the window lies, its corner, and how far it has arrived (0 to 1).</summary>
+    public readonly record struct Pane(float X, float Y, float Width, float Height, float Radius, float Strength);
+
+    public Pane[] Glass = [];
+
+    /// <summary>Where the pointer is over the window, or null while it is not over it: the glass is lit a little round it.</summary>
+    public Vector2? Pointer;
+
     public Vector2[] Owner = [];
     public Vector2 OwnerAt;
     public float OwnerLight;
@@ -167,11 +180,21 @@ sealed class FloorScene
     float _time, _asleep = 1, _asleepWanted = 1, _ownerLight;
     FloorTape? _tape;
     float _tapeBorn, _tapeFresh;
-    float _zoom, _zoomWanted;
     Vector3 _target;
     Vector2 _lean, _leanWanted;
     bool _fitted;
     string? _marked;
+
+    /// <summary>Where the camera stands without its drift and its lean: the angle, how near, and where the floor's own middle falls on the stage.</summary>
+    readonly record struct Stand(float Yaw, float Pitch, float Zoom, Vector2 Offset)
+    {
+        public static Stand Between(Stand a, Stand b, float t) =>
+            new(a.Yaw + (b.Yaw - a.Yaw) * t, a.Pitch + (b.Pitch - a.Pitch) * t, a.Zoom + (b.Zoom - a.Zoom) * t, Vector2.Lerp(a.Offset, b.Offset, t));
+    }
+
+    Stand _stand, _from, _to;
+    float _glide = 1, _glideLasts = 1;
+    FloorLook? _look;
 
     public FloorPlan Plan => _plan;
     public FloorMotion Motion { get; set; } = FloorMotion.Full;
@@ -225,7 +248,7 @@ sealed class FloorScene
             nth++;
         }
         foreach (var gone in _slabs.Where(kv => !kv.Value.Seen).Select(kv => kv.Key).ToList()) _slabs.Remove(gone);
-        _fitted = false;
+        _refit = true;
         _arriving = assembling;
         Attend();
     }
@@ -499,12 +522,14 @@ sealed class FloorScene
         var before = _lean;
         _lean += (_leanWanted - _lean) * Math.Min(1, dt * 3.5f);
         if (Vector2.DistanceSquared(before, _lean) > 1e-7f) busy = true;
-        if (MathF.Abs(_zoom - _zoomWanted) > 0.01f || Vector2.DistanceSquared(_offset, _offsetWanted) > 0.05f) busy = true;
-        // Coming in at the start is slow enough to be seen; following a window being resized is quick enough not to be.
-        var follow = _arriving ? 1.3f : 4f;
-        if (_arriving && MathF.Abs(_zoom - _zoomWanted) < 0.05f) _arriving = false;
-        _zoom += (_zoomWanted - _zoom) * Math.Min(1, dt * follow);
-        _offset += (_offsetWanted - _offset) * Math.Min(1, dt * 4f);
+        // THE CAMERA TRAVELS, it does not snap and it does not chase: from where it stood to where it is wanted in one eased move, slow
+        // at both ends, the way a camera on a crane is moved.
+        if (_glide < 1)
+        {
+            _glide = Math.Min(1, _glide + dt / _glideLasts);
+            _stand = Stand.Between(_from, _to, Glide(_glide));
+            busy = true;
+        }
 
         if (_attention > 0)
         {
@@ -520,7 +545,7 @@ sealed class FloorScene
     /// </summary>
     public void Tape(FloorTape? tape)
     {
-        if (tape is null != _tape is null) _fitted = false;                       // the floor is fitted with its tape or without it
+        if (tape is null != _tape is null) _refit = true;                       // the floor is fitted with its tape or without it
         var same = tape is not null && _tape is not null && tape.Caption == _tape.Caption && tape.Stale == _tape.Stale
                    && tape.Heights.AsSpan().SequenceEqual(_tape.Heights);
         if (same) return;
@@ -553,43 +578,83 @@ sealed class FloorScene
     // ---- one frame --------------------------------------------------------------------------------------------------------------
 
     /// <summary>
+    /// WHAT THE CAMERA IS ASKED TO LOOK AT: the whole floor from its resting angle (null), or one part of it — a seat, the security
+    /// board, the owner's place, the tape — from an angle of that part's own. The camera travels there; nothing on the floor moves.
+    /// </summary>
+    public void Look(FloorLook? look)
+    {
+        if (_look == look) return;
+        _look = look;
+        _refit = true;
+        _travelLasts = TravelLasts;
+        Attend();
+    }
+
+    /// <summary>The next time the camera is asked to stand somewhere else it travels there, however little changed.</summary>
+    public void Glide()
+    {
+        _travelLasts = TravelLasts;
+        Attend();
+    }
+
+    /// <summary>The part of the floor the camera is on, or null for the whole of it.</summary>
+    public FloorLook? Looking => _look;
+
+    /// <summary>How long the camera takes between two places, coming in as the floor first builds, and following a window being resized.</summary>
+    public const float TravelLasts = 1.05f, ArriveLasts = 1.9f, FollowLasts = 0.22f;
+
+    bool _refit;
+    float _travelLasts = FollowLasts;
+
+    /// <summary>
     /// The camera for a stage whose clear part — not under the words laid over it — is <paramref name="clear"/> (left, top, right,
-    /// bottom): turned a little by time and by the pointer, and as near as it can stand with the whole floor in the clear part.
+    /// bottom): turned a little by time and by the pointer, and as near as it can stand with what it looks at in the clear part.
     /// </summary>
     FloorCamera Camera((float L, float T, float R, float B) clear)
     {
-        var drift = MathF.Sin(_time * 0.11f) * 0.04f * Drift;
-        var yaw = BaseYaw + drift + _lean.X * 0.06f;
-        var pitch = BasePitch + MathF.Sin(_time * 0.07f + 1.3f) * 0.012f * Drift + _lean.Y * 0.03f;
-
-        if (!_fitted || clear != _fitKey)
+        if (!_fitted || _refit || clear != _fitKey)
         {
+            var first = !_fitted;
             _fitKey = clear;
-            (_zoomWanted, _offsetWanted) = Fit(clear);
-            if (!_fitted || _zoom <= 0)
-            {
-                _zoom = _arriving ? _zoomWanted * 0.9f : _zoomWanted;
-                _offset = _offsetWanted;
-            }
+            _refit = false;
             _fitted = true;
+            var (to, centre) = Fit(clear);
+            if (first || _stand.Zoom <= 0)
+            {
+                // The first frame stands where it is wanted — or, as the floor first builds, a step back from it, and comes in.
+                _stand = _arriving ? to with { Zoom = to.Zoom * 0.9f, Offset = to.Offset + centre * (to.Zoom * 0.1f) } : to;
+                if (!_arriving) { _to = to; _glide = 1; }
+            }
+            if (_stand != to)
+            {
+                _from = _stand;
+                _to = to;
+                _glide = 0;
+                _glideLasts = _arriving ? ArriveLasts : _travelLasts;
+                _arriving = false;
+                _travelLasts = FollowLasts;
+                Busy = true;
+            }
         }
-        // Where the floor's middle falls follows the zoom it is drawn at, so coming in is a move toward the floor and not a slide across it.
-        return new FloorCamera(yaw, pitch, _zoom, _offset + _centre * (_zoomWanted - _zoom), _target, Perspective);
+        var drift = MathF.Sin(_time * 0.11f) * 0.04f * Drift;
+        var yaw = _stand.Yaw + drift + _lean.X * 0.06f;
+        var pitch = _stand.Pitch + MathF.Sin(_time * 0.07f + 1.3f) * 0.012f * Drift + _lean.Y * 0.03f;
+        return new FloorCamera(yaw, pitch, _stand.Zoom, _stand.Offset, _target, Perspective);
     }
 
     (float, float, float, float) _fitKey;
-    Vector2 _offset, _offsetWanted, _centre;
 
     /// <summary>
-    /// How near the camera may stand, and where on the stage the floor's middle then falls: the whole floor — every slab's corners and
-    /// the top of every cell — inside the clear part, in the middle of it. Fitted at the resting angle, so the floor does not breathe in
-    /// and out as the camera turns.
+    /// Where the camera is wanted, and the middle of what it frames at a zoom of one: what it looks at — the whole floor, every slab's
+    /// corners and the top of every cell, or the part a <see cref="FloorLook"/> names — inside the clear part, in the middle of it.
+    /// Fitted at the angle it will rest at, so the floor does not breathe in and out as the camera turns.
     /// </summary>
-    (float Zoom, Vector2 Offset) Fit((float L, float T, float R, float B) clear)
+    (Stand To, Vector2 Centre) Fit((float L, float T, float R, float B) clear)
     {
         _target = ((_plan.Min + _plan.Max) / 2) with { Z = 0 };
+        float wantedYaw = _look?.Yaw ?? BaseYaw, wantedPitch = _look?.Pitch ?? BasePitch;
         // With the camera's own perspective: what is nearer is drawn larger, and it is the drawn floor that has to fit.
-        var rest = new FloorCamera(BaseYaw, BasePitch, 1, Vector2.Zero, _target, Perspective);
+        var rest = new FloorCamera(wantedYaw, wantedPitch, 1, Vector2.Zero, _target, Perspective);
         float minX = float.MaxValue, maxX = float.MinValue, minY = float.MaxValue, maxY = float.MinValue;
         void Hold(Vector3 world)
         {
@@ -597,28 +662,66 @@ sealed class FloorScene
             minX = Math.Min(minX, p.X); maxX = Math.Max(maxX, p.X);
             minY = Math.Min(minY, p.Y); maxY = Math.Max(maxY, p.Y);
         }
-        foreach (var slab in _plan.Slabs)
-        {
-            Hold(new Vector3(slab.X0, slab.Y0, slab.Z0)); Hold(new Vector3(slab.X1, slab.Y0, slab.Z0));
-            Hold(new Vector3(slab.X1, slab.Y1, slab.Z1)); Hold(new Vector3(slab.X0, slab.Y1, slab.Z1));
-        }
-        foreach (var cell in _plan.Cells)
-        {
-            var half = cell.Size / 2;
-            for (var i = 0; i < 4; i++)
-                Hold(cell.Foot + new Vector3((i & 1) == 0 ? -half : half, (i & 2) == 0 ? -half : half, cell.Height));
-        }
         var middle = new Vector2((clear.L + clear.R) / 2, (clear.T + clear.B) / 2);
-        if (_plan.Slabs.Count == 0) return (40, middle);
-        Hold(_plan.Owner + new Vector3(0.5f, 0.5f, 0));
-        if (_tape is not null && TapeStrip() is { } strip)
-            foreach (var corner in strip.Corners) Hold(corner);
+        if (_plan.Slabs.Count == 0) return (new Stand(wantedYaw, wantedPitch, 40, middle), Vector2.Zero);
+        if (_look is { } look)
+        {
+            foreach (var corner in Corners(look.Min, look.Max)) Hold(corner);
+        }
+        else
+        {
+            foreach (var slab in _plan.Slabs)
+            {
+                Hold(new Vector3(slab.X0, slab.Y0, slab.Z0)); Hold(new Vector3(slab.X1, slab.Y0, slab.Z0));
+                Hold(new Vector3(slab.X1, slab.Y1, slab.Z1)); Hold(new Vector3(slab.X0, slab.Y1, slab.Z1));
+            }
+            foreach (var cell in _plan.Cells)
+            {
+                var half = cell.Size / 2;
+                for (var i = 0; i < 4; i++)
+                    Hold(cell.Foot + new Vector3((i & 1) == 0 ? -half : half, (i & 2) == 0 ? -half : half, cell.Height));
+            }
+            Hold(_plan.Owner + new Vector3(0.5f, 0.5f, 0));
+            if (_tape is not null && TapeStrip() is { } strip)
+                foreach (var corner in strip.Corners) Hold(corner);
+        }
 
         var zoom = Math.Min((clear.R - clear.L) / Math.Max(0.1f, maxX - minX), (clear.B - clear.T) / Math.Max(0.1f, maxY - minY));
-        zoom = Math.Clamp(zoom, 12, 120);
-        _centre = new Vector2((minX + maxX) / 2, (minY + maxY) / 2);
-        return (zoom, middle - _centre * zoom);
+        zoom = Math.Clamp(zoom, 12, _look is null ? 120 : 190);
+        var centre = new Vector2((minX + maxX) / 2, (minY + maxY) / 2);
+        return (new Stand(wantedYaw, wantedPitch, zoom, middle - centre * zoom), centre);
     }
+
+    /// <summary>The box round a cell and what stands near it, for a camera that goes to it: wide enough that the cell is seen where it stands.</summary>
+    public FloorLook? About(string id, float reach = 2.3f, float yaw = BaseYaw - 0.12f, float pitch = BasePitch - 0.1f)
+    {
+        if (id == OwnerId)
+            return new FloorLook(_plan.Owner - new Vector3(reach, reach, 0), _plan.Owner + new Vector3(reach, reach * 0.7f, 1.2f), yaw, pitch);
+        if (!_plan.ById.TryGetValue(id, out var cell)) return null;
+        return new FloorLook(cell.Foot - new Vector3(reach, reach, 0) with { Z = 0 }, cell.Foot + new Vector3(reach, reach, cell.Height + 0.4f), yaw, pitch);
+    }
+
+    /// <summary>The box round a unit's slab, or null where the floor has no such unit.</summary>
+    public FloorLook? AboutUnit(string unit, float margin = 0.8f, float yaw = BaseYaw - 0.1f, float pitch = BasePitch - 0.06f)
+    {
+        var slab = _plan.Slabs.FirstOrDefault(s => s.Unit == unit);
+        return slab is null ? null
+            : new FloorLook(new Vector3(slab.X0 - margin, slab.Y0 - margin, 0), new Vector3(slab.X1 + margin, slab.Y1 + margin, slab.Z1 + 1.4f), yaw, pitch);
+    }
+
+    /// <summary>The box round the tape and the front of the organisation behind it, or null where there is no tape or no floor.</summary>
+    public FloorLook? AboutTape(float yaw = BaseYaw, float pitch = BasePitch - 0.2f)
+    {
+        if (TapeStrip() is not { } strip || _plan.Ground is not { } ground) return null;
+        Vector3 min = strip.Corners[0], max = strip.Corners[0];
+        foreach (var corner in strip.Corners) { min = Vector3.Min(min, corner); max = Vector3.Max(max, corner); }
+        // A little of the organisation behind it: the market is looked at from the desk, with the floor still standing at its back.
+        var back = Math.Min(max.Y + (ground.Y1 - ground.Y0) * 0.3f, ground.Y1);
+        return new FloorLook(min with { Z = 0 }, new Vector3(max.X, back, 1.5f), yaw, pitch);
+    }
+
+    /// <summary>The floor's resting angle, for a look that keeps it.</summary>
+    public const float RestYaw = BaseYaw, RestPitch = BasePitch;
 
     static IEnumerable<Vector3> Corners(Vector3 min, Vector3 max)
     {
@@ -838,4 +941,11 @@ sealed class FloorScene
     static float Ease(float t) => 1 - MathF.Pow(1 - Math.Clamp(t, 0, 1), 3);
     static float EaseOut(float t) => 1 - (1 - Math.Clamp(t, 0, 1)) * (1 - Math.Clamp(t, 0, 1));
     static float EaseInOut(float t) => t < 0.5f ? 2 * t * t : 1 - MathF.Pow(-2 * t + 2, 2) / 2;
+
+    /// <summary>The camera's own curve: slow away, quick through the middle, and a long, soft arrival.</summary>
+    static float Glide(float t)
+    {
+        t = Math.Clamp(t, 0, 1);
+        return t < 0.5f ? 4 * t * t * t : 1 - MathF.Pow(-2 * t + 2, 3) / 2;
+    }
 }
