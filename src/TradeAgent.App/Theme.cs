@@ -183,6 +183,26 @@ static partial class Theme
     public static readonly IBrush GlassLine = B("#FFFFFF", 0.09);
     public static readonly IBrush GlassHover = B("#FFFFFF", 0.07);
     public static readonly IBrush GlassActive = B("#FFFFFF", 0.12);
+    /// <summary>The rim of a pane that is not drawn by the floor's painter (the setup pane): light along its top, fading down its sides.</summary>
+    public static readonly IBrush PaneRim = new LinearGradientBrush
+    {
+        StartPoint = new RelativePoint(0, 0, RelativeUnit.Relative),
+        EndPoint = new RelativePoint(0, 1, RelativeUnit.Relative),
+        GradientStops = { new GradientStop(Color.Parse("#52FFFFFF"), 0), new GradientStop(Color.Parse("#14FFFFFF"), 0.35), new GradientStop(Color.Parse("#1FFFFFFF"), 1) }
+    };
+
+    /// <summary>What stands behind the setup pane: the pool of faint light the floor stands in, before there is a floor.</summary>
+    public static readonly IBrush SetupGlow = new RadialGradientBrush
+    {
+        Center = new RelativePoint(0.5, 0.38, RelativeUnit.Relative),
+        GradientOrigin = new RelativePoint(0.5, 0.38, RelativeUnit.Relative),
+        RadiusX = new RelativeScalar(0.75, RelativeUnit.Relative), RadiusY = new RelativeScalar(0.6, RelativeUnit.Relative),
+        GradientStops = { new GradientStop(Color.Parse("#801B213A"), 0), new GradientStop(Color.Parse("#40121626"), 0.5), new GradientStop(Color.Parse("#000B0D12"), 1) }
+    };
+
+    /// <summary>The widest the setup pane is.</summary>
+    public const double SetupMaxWidth = 960;
+
     /// <summary>What lies over the whole window while the search is open.</summary>
     public static readonly IBrush Dim = B("#05060A", 0.55);
 
@@ -221,6 +241,17 @@ static partial class Theme
         StartPoint = new RelativePoint(0, 0, RelativeUnit.Relative),
         EndPoint = new RelativePoint(1, 0, RelativeUnit.Relative),
         GradientStops = { new GradientStop(Color.Parse("#000B0D12"), 0), new GradientStop(Color.Parse("#CC0B0D12"), 0.45), new GradientStop(Color.Parse("#F20B0D12"), 1) }
+    };
+
+    /// <summary>
+    /// What stands under the title at the window's top left: the window's own dark, whole in the corner and gone a little way out,
+    /// so the title is read over whatever part of the floor the camera has brought under it.
+    /// </summary>
+    public static readonly IBrush TitleScrim = new RadialGradientBrush
+    {
+        Center = new RelativePoint(0, 0, RelativeUnit.Relative), GradientOrigin = new RelativePoint(0, 0, RelativeUnit.Relative),
+        RadiusX = new RelativeScalar(1, RelativeUnit.Relative), RadiusY = new RelativeScalar(1, RelativeUnit.Relative),
+        GradientStops = { new GradientStop(Color.Parse("#F00B0D12"), 0), new GradientStop(Color.Parse("#C00B0D12"), 0.5), new GradientStop(Color.Parse("#000B0D12"), 1) }
     };
 
     // ---- motion -----------------------------------------------------------------------------

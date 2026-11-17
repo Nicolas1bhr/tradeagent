@@ -165,7 +165,8 @@ public sealed class MainWindow : Window
 
         _setupSurface = SetupSurface(_setupSlot);
 
-        Content = new Grid { Children = { _setupSurface, _shellSurface } };
+        // Behind the setup pane: a pool of faint light, the one the floor will stand in.
+        Content = new Grid { Children = { new Border { Background = Tokens.SetupGlow, IsHitTestVisible = false }, _setupSurface, _shellSurface } };
     }
 
     // ---- lifecycle -----------------------------------------------------------------------------
@@ -246,7 +247,19 @@ public sealed class MainWindow : Window
     /// <summary>The setup surface: <paramref name="slot"/>, padded, in a scroll viewer.</summary>
     internal static ScrollViewer SetupSurface(Control slot) => new()
     {
-        Content = new Border { Padding = new Thickness(Tokens.S8, Tokens.S10), Child = slot }
+        // ONE PANE, ALONE IN THE WINDOW (U-ui-world): before there is an organisation there is no floor to stand behind it, so the
+        // pane is the window's own dark, lifted, with glass's rim — the same thing the owner will read every page on once he is in.
+        Content = new Border
+        {
+            Padding = new Thickness(Tokens.S8, Tokens.S10),
+            Child = new Border
+            {
+                MaxWidth = Tokens.SetupMaxWidth, HorizontalAlignment = HorizontalAlignment.Stretch,
+                Background = Tokens.Solid, BorderBrush = Tokens.PaneRim, BorderThickness = new Thickness(1),
+                CornerRadius = Tokens.RadiusSheet, Padding = new Thickness(Tokens.S10, Tokens.S10, Tokens.S10, Tokens.S8),
+                Child = slot
+            }
+        }
     };
 
     /// <summary>

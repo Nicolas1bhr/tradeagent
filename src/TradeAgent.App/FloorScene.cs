@@ -41,10 +41,17 @@ readonly record struct FloorCamera(float Yaw, float Pitch, float Zoom, Vector2 S
 /// <summary>
 /// HOW THE FLOOR IS READ (<c>U-ui-world</c>). <see cref="Structure"/>: as it stands — who sits where and who is working.
 /// <see cref="Work"/>: with every open task drawn as a thread from the seat that gave it to the seat that holds it.
-/// <see cref="Money"/>: with every unit standing in a column of glass as tall as what it spent today. The floor is the same floor;
-/// a lens only adds what a page beside it is about.
+/// <see cref="Money"/>: with every unit standing in a column of glass as tall as what it spent today.
+/// <see cref="Machine"/>: with what the floor stands on shown under it — a pillar for each part of this computer, lit as that part
+/// stands. The floor is the same floor; a lens only adds what a page beside it is about.
 /// </summary>
-enum FloorLens { Structure, Work, Money }
+enum FloorLens { Structure, Work, Money, Machine }
+
+/// <summary>How one part of this computer stands, as the floor lights it: the five things a part's state can ask of the owner's eye.</summary>
+enum FloorPartState { Ready, Starting, Attention, Failed, Unknown }
+
+/// <summary>One part of this computer as the floor draws it under the machine lens: its name, and how it stands.</summary>
+readonly record struct FloorPart(string Name, FloorPartState State);
 
 /// <summary>
 /// One open task as the floor draws it: from the seat that gave it to the seat that holds it, how far through its time it is (0 at
@@ -136,8 +143,15 @@ sealed class FloorFrame
     /// <summary>A unit's column: its foot and its top (four corners each, as a slab's), how much of it is shown, and where its figure is written.</summary>
     public readonly record struct Column(string Unit, Vector2[] Foot, Vector2[] Top, float Strength, bool Unknown);
 
+    /// <summary>A pillar under the floor: its face toward the camera (four corners, foot first), where its light is, and how it stands.</summary>
+    public readonly record struct Post(Vector2[] Face, Vector2 Light, FloorPartState State, float Strength);
+
     public Thread[] Threads = [];
     public Column[] Columns = [];
+    public Post[] Posts = [];
+
+    /// <summary>The parts' names, written down their pillars.</summary>
+    public Name[] PostNames = [];
 
     /// <summary>What is written on the columns' lids, lying on them as a unit's name lies on its slab: each figure, and what it is a figure of.</summary>
     public Name[] Figures = [];
@@ -231,7 +245,8 @@ sealed class FloorScene
     }
 
     FloorLens _lens;
-    float _workShown, _moneyShown;
+    float _workShown, _moneyShown, _machineShown;
+    IReadOnlyList<FloorPart> _parts = [];
     IReadOnlyList<FloorThread> _threads = [];
     IReadOnlyDictionary<string, FloorColumn> _columns = new Dictionary<string, FloorColumn>();
     readonly Dictionary<string, float> _columnNow = new(StringComparer.Ordinal);
@@ -568,6 +583,7 @@ sealed class FloorScene
 
         _workShown = Toward(_workShown, _lens == FloorLens.Work ? 1 : 0, dt, 2.4f, ref busy);
         _moneyShown = Toward(_moneyShown, _lens == FloorLens.Money ? 1 : 0, dt, 2.4f, ref busy);
+        _machineShown = Toward(_machineShown, _lens == FloorLens.Machine ? 1 : 0, dt, 1.8f, ref busy);
         if (_moneyShown > 0 || _columnNow.Count > 0)
         {
             foreach (var (unit, column) in _columns)
@@ -615,7 +631,7 @@ sealed class FloorScene
     public void Lens(FloorLens lens)
     {
         if (_lens == lens) return;
-        var money = lens == FloorLens.Money || _lens == FloorLens.Money;
+        var money = lens is FloorLens.Money or FloorLens.Machine || _lens is FloorLens.Money or FloorLens.Machine;
         _lens = lens;
         // The money lens stands columns on the floor: with them, or without them again, the floor is framed afresh.
         if (money)
@@ -634,6 +650,28 @@ sealed class FloorScene
         if (_threads.SequenceEqual(threads)) return;
         _threads = threads;
         if (_lens == FloorLens.Work) Busy = true;
+    }
+
+    /// <summary>The parts of this computer, for the machine lens. Told the same ones again, nothing stirs.</summary>
+    public void Parts(IReadOnlyList<FloorPart> parts)
+    {
+        if (_parts.SequenceEqual(parts)) return;
+        _parts = parts;
+        if (_lens == FloorLens.Machine) Busy = true;
+    }
+
+    /// <summary>How far under the floor its pillars reach, in cells.</summary>
+    public const float PostDeep = 2.3f;
+
+    /// <summary>
+    /// The side of the floor its pillars stand under, as a look: from low and to the side, so what the floor stands on is seen. Null
+    /// on an empty floor.
+    /// </summary>
+    public FloorLook? AboutMachine()
+    {
+        if (_plan.Ground is not { } ground) return null;
+        return new FloorLook(new Vector3(ground.X1 - 2.2f, ground.Y0, -PostDeep - 0.2f), new Vector3(ground.X1 + 0.3f, ground.Y1, 1.3f),
+            BaseYaw + 0.5f, BasePitch - 0.36f);
     }
 
     /// <summary>Each unit's column, by unit, for the money lens. Told the same ones again, nothing stirs.</summary>
@@ -1025,6 +1063,32 @@ sealed class FloorScene
             frame.Columns = [.. columns.OrderBy(c => c.Depth).Select(c => c.Column)];
             frame.Figures = [.. figures];
             frame.FigureNotes = [.. notes];
+        }
+
+        // THE MACHINE LENS: what the floor stands on — a pillar for each part of this computer, under the floor's side, its name
+        // written down it and a light at its head in the colour of how the part stands.
+        if (_machineShown > 0.01f && _parts.Count > 0 && _plan.Ground is { } ground)
+        {
+            var shown = Ease(_machineShown);
+            var posts = new List<FloorFrame.Post>();
+            var written = new List<FloorFrame.Name>();
+            float run = ground.Y1 - ground.Y0 - 0.5f, step = run / _parts.Count, wide = Math.Min(0.46f, step * 0.72f);
+            for (var i = 0; i < _parts.Count; i++)
+            {
+                // Nearest the camera first in the list, so the parts are read front to back in the order the Checks page lists them.
+                var y = ground.Y0 + 0.25f + step * (i + 0.5f);
+                var deep = PostDeep * shown;
+                Vector3 a = new(ground.X1, y - wide / 2, -deep), b = new(ground.X1, y + wide / 2, -deep),
+                    c = new(ground.X1, y + wide / 2, 0), d = new(ground.X1, y - wide / 2, 0);
+                posts.Add(new FloorFrame.Post([cam.Point(a), cam.Point(b), cam.Point(c), cam.Point(d)], cam.Point(new Vector3(ground.X1, y, -0.16f)), _parts[i].State, shown));
+                // Down the pillar, the way a book's spine is read: from its head to its foot.
+                var at = new Vector3(ground.X1, y - wide * 0.2f, -0.36f);
+                var on = cam.Point(at);
+                written.Add(new FloorFrame.Name(_parts[i].Name, on, cam.Point(at + new Vector3(0, 0, -1)) - on, cam.Point(at + new Vector3(0, 1, 0)) - on,
+                    Math.Min(0.2f, wide * 0.5f), PostDeep - 0.5f, shown));
+            }
+            frame.Posts = [.. posts];
+            frame.PostNames = [.. written];
         }
 
         var sparks = new List<FloorFrame.Spark>();

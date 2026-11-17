@@ -151,10 +151,52 @@ static class FloorPaint
             if (flight.Air) Flight(canvas, flight);
         foreach (var spark in f.Sparks) Spark(canvas, spark);
         foreach (var cell in f.Cells) Marks(canvas, cell);
+        foreach (var post in f.Posts) Post(canvas, post);
+        foreach (var name in f.PostNames) Name(canvas, name, Muted, 5.5f);
         foreach (var column in f.Columns) Column(canvas, column);
         foreach (var figure in f.Figures) Name(canvas, figure, SKColors.White, 6);
         foreach (var note in f.FigureNotes) Name(canvas, note, Muted, 5.5f);
         foreach (var thread in f.Threads) Thread(canvas, thread);
+    }
+
+    /// <summary>
+    /// A PILLAR UNDER THE FLOOR (the machine lens): one part of what the floor stands on — a face of faint glass, lighter at its head,
+    /// and at its head a light in the colour of how the part stands: green ready, amber asking to be looked at, red not working, the
+    /// AI's indigo while it starts, grey where nobody has looked yet. The same five colours every page uses for the same five things.
+    /// </summary>
+    static void Post(SKCanvas canvas, FloorFrame.Post post)
+    {
+        if (post.Strength <= 0.01f) return;
+        using var face = Poly(post.Face);
+        using var paint = new SKPaint { IsAntialias = true };
+        paint.Shader = SKShader.CreateLinearGradient(P((post.Face[2] + post.Face[3]) / 2), P((post.Face[0] + post.Face[1]) / 2),
+            [A(SKColors.White, 0.13f * post.Strength), A(SKColors.White, 0.015f * post.Strength)], null, SKShaderTileMode.Clamp);
+        canvas.DrawPath(face, paint);
+        paint.Shader.Dispose();
+        paint.Shader = null;
+        paint.Style = SKPaintStyle.Stroke;
+        paint.StrokeWidth = 1;
+        paint.Color = A(SKColors.White, 0.2f * post.Strength);
+        canvas.DrawPath(face, paint);
+
+        var tone = post.State switch
+        {
+            FloorPartState.Ready => new SKColor(0x3F, 0xB6, 0x8B),
+            FloorPartState.Attention => new SKColor(0xE0, 0xA4, 0x58),
+            FloorPartState.Failed => new SKColor(0xE5, 0x48, 0x4D),
+            FloorPartState.Starting => new SKColor(0x7C, 0x8C, 0xF8),
+            _ => new SKColor(0x6A, 0x73, 0x82)
+        };
+        paint.Style = SKPaintStyle.Fill;
+        // A part that asks to be looked at is the brighter light: ready is calm, and nobody having looked is nearly dark.
+        var loud = post.State is FloorPartState.Attention or FloorPartState.Failed ? 1f : post.State == FloorPartState.Unknown ? 0.45f : 0.75f;
+        paint.Color = A(tone, 0.3f * loud * post.Strength);
+        paint.MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 5);
+        canvas.DrawCircle(P(post.Light), 8, paint);
+        paint.MaskFilter.Dispose();
+        paint.MaskFilter = null;
+        paint.Color = A(tone, Math.Min(1, 0.6f + 0.4f * loud) * post.Strength);
+        canvas.DrawCircle(P(post.Light), 3.2f, paint);
     }
 
     /// <summary>

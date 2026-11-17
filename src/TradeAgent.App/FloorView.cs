@@ -85,6 +85,9 @@ sealed record FloorSources
     /// </summary>
     public Func<DateTimeOffset, IReadOnlyList<UnitClassTotals>?> Costs { get; init; } = _ => null;
 
+    /// <summary>How each part of this computer stands, as the Checks page lists them. For the floor's machine lens.</summary>
+    public Func<IReadOnlyList<ComponentHealth>> Health { get; init; } = () => [];
+
     /// <summary>The sources over the running app.</summary>
     public static FloorSources For(AppHost host)
     {
@@ -99,6 +102,7 @@ sealed record FloorSources
         Board = () => host.Board.Seats(),
         Glance = () => GlanceRead.From(host, DateTimeOffset.UtcNow),
         AiRunning = () => host.Agent.Running,
+        Health = () => host.Health.Snapshot(),
         Costs = now => host.AttemptLedger is { } ledger && OwnerDay.Window(now) is var (from, to) ? ledger.UnitTotalsByClass(from, to) : null,
         TurnsOpen = () => host.Mission.Status is { State: MissionState.Working or MissionState.Waiting, Held: null }
                           && host.DiskPauseWords is null && host.CrashWaitWords is null
@@ -335,8 +339,10 @@ sealed partial class FloorPage
             Ui.With(_next, t => t.MaxWidth = 460),
             Ui.With(_problem, t => t.MaxWidth = 460),
             Ui.With(_notDrawn, t => { t.MaxWidth = 460; t.IsVisible = false; }),
-            Ui.With(_start, c => c.Margin = new Thickness(0, Theme.S3, 0, 0)),
-            _replayRow = Ui.With(BuildReplay(), c => c.Margin = new Thickness(-Theme.S2, Theme.S2, 0, 0)));
+            Ui.With(_start, c => c.Margin = new Thickness(0, Theme.S3, 0, 0)));
+        // THE REPLAY'S PRESSES STAND AT THE FLOOR'S FOOT, over the day's figures: they are the floor's own controls, and under the
+        // title they lay across the far corner of the organisation.
+        _replayRow = Ui.With(BuildReplay(), c => { c.Margin = new Thickness(-Theme.S2, 0, 0, 0); c.HorizontalAlignment = HorizontalAlignment.Left; });
         title.HorizontalAlignment = HorizontalAlignment.Left;
         title.VerticalAlignment = VerticalAlignment.Top;
         title.Margin = new Thickness(Theme.S8, Theme.S6, 0, 0);
@@ -361,10 +367,20 @@ sealed partial class FloorPage
                 c => c.VerticalAlignment = VerticalAlignment.Bottom));
         _figures.Name = "floor-figures";
         _figures.HorizontalAlignment = HorizontalAlignment.Left;
-        _figures.VerticalAlignment = VerticalAlignment.Bottom;
-        _figures.Margin = new Thickness(Theme.S8, 0, 0, Theme.S6);
+        _foot = Ui.Col(Theme.S3, _replayRow, _figures);
+        _foot.HorizontalAlignment = HorizontalAlignment.Left;
+        _foot.VerticalAlignment = VerticalAlignment.Bottom;
+        _foot.Margin = new Thickness(Theme.S8, 0, 0, Theme.S6);
 
-        Root = new Grid { Children = { _stage, _captions, _feedColumn, title, _figures }, ClipToBounds = true };
+        // UNDER THE TITLE, THE WINDOW'S OWN DARK, fading out: where the camera has gone to one part of the floor, the rest of the
+        // floor runs on under the title, and the title is still what is read there.
+        var titleScrim = new Border
+        {
+            Background = Theme.TitleScrim, IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top, Width = 640, Height = 420
+        };
+
+        Root = new Grid { Children = { _stage, _captions, titleScrim, _feedColumn, title, _foot }, ClipToBounds = true };
 
         // THE FLOOR STANDS BETWEEN THE TITLE AND THE FIGURES, and runs a little way under the sentences on the right, where they are darkest
         // — or, while the window has a sheet over its right side, in what the sheet leaves.
@@ -374,7 +390,7 @@ sealed partial class FloorPage
             // title's first lines, and is kept only from under the lines below them.
             // Beside a sheet there is no beside: the floor stands under the title.
             var top = _reserveRight > 0 ? title.Bounds.Bottom + 6 : _reserveTop + (title.Bounds.Height > 0 ? title.Bounds.Height * 0.42 : 90);
-            var bottom = _figures.IsVisible && _figures.Bounds.Height > 0 ? _figures.Bounds.Top - 14 : size.Height - 28 - _reserveBottom;
+            var bottom = _foot.IsVisible && _foot.Bounds.Height > 0 ? _foot.Bounds.Top - 10 : size.Height - 28 - _reserveBottom;
             var right = _reserveRight > 0 ? size.Width - _reserveRight - 24 : size.Width - (_feedColumn.IsVisible ? FeedWidth - 14 : 28);
             // A stage too small to stand a floor in still gets a box with room in it: the camera fits what it can.
             return (28, (float)top, (float)Math.Max(right, 28 + 120), (float)Math.Max(bottom, top + 120));
@@ -395,6 +411,7 @@ sealed partial class FloorPage
 
     readonly StackPanel _title;
     readonly Control _replayRow;
+    readonly StackPanel _foot;
     double _reserveTop, _reserveRight, _reserveBottom;
 
     /// <summary>
@@ -410,7 +427,7 @@ sealed partial class FloorPage
         _reserveRight = right;
         _reserveBottom = bottom;
         _feedColumn.Margin = new Thickness(0, top, 0, bottom);
-        _figures.Margin = new Thickness(Theme.S8, 0, 0, Theme.S4 + bottom);
+        _foot.Margin = new Thickness(Theme.S8, 0, 0, Theme.S4 + bottom);
         Fit();
         // A sheet arriving or leaving is a move of the camera's, not a window being resized: it travels.
         if (moved) _stage.Scene.Glide();
@@ -421,12 +438,12 @@ sealed partial class FloorPage
     {
         // On a narrow window, or under a sheet, the stage keeps the room: the sentences go, the floor stays.
         _feedColumn.IsVisible = _reserveRight <= 0 && Root.Bounds.Width >= 860;
-        _figures.IsVisible = Root.Bounds.Height >= 520;
+        _foot.IsVisible = Root.Bounds.Height >= 520;
         // The floor's own words keep to the floor's share of the window. A replay is the floor's alone: beside a sheet — a page of
         // the present — its presses are put away with it.
         var share = Math.Max(240, Root.Bounds.Width - _reserveRight - 2 * Theme.S8);
         _title.MaxWidth = Math.Min(560, share);
-        _figures.MaxWidth = _reserveRight > 0 ? share : double.PositiveInfinity;
+        _foot.MaxWidth = _reserveRight > 0 ? share : double.PositiveInfinity;
         _replayRow.IsVisible = _reserveRight <= 0;
     }
 
@@ -444,6 +461,7 @@ sealed partial class FloorPage
         {
             MainWindow.Page.Work => FloorLens.Work,
             MainWindow.Page.Costs => FloorLens.Money,
+            MainWindow.Page.Checks or MainWindow.Page.Activity or MainWindow.Page.Settings => FloorLens.Machine,
             _ => FloorLens.Structure
         };
         var read = lens == FloorLens.Money && _stage.Scene.Reading != FloorLens.Money;
@@ -451,6 +469,7 @@ sealed partial class FloorPage
         _stage.Scene.Lens(lens);
         // The money lens has its own read: asked for now, not at the next look.
         if (read) { _costs = null; Read(); }
+        Machine();
         if (page != MainWindow.Page.Floor && _chosen is not null)
         {
             _chosen = null;
@@ -477,7 +496,7 @@ sealed partial class FloorPage
                 App.Place.Desk => scene.AboutTape(),
                 App.Place.Board => scene.AboutUnit(FloorChart.BoardUnit),
                 App.Place.Yours => scene.About(FloorScene.OwnerId),
-                App.Place.Machine => new FloorLook(plan.Min, plan.Max, FloorScene.RestYaw - 0.26f, FloorScene.RestPitch - 0.24f),
+                App.Place.Machine => scene.AboutMachine(),
                 _ => null
             };
         }
@@ -560,7 +579,23 @@ sealed partial class FloorPage
     public void Update(GatewayStatus status)
     {
         _turns.Text = status.AiTurnsToday.ToString(CultureInfo.InvariantCulture);
+        Machine();
         Read();
+    }
+
+    /// <summary>The machine lens's pillars: this computer's parts as they stand now. Read only while that lens is on — it is the app's own list, in memory.</summary>
+    void Machine()
+    {
+        if (_stage.Scene.Reading != FloorLens.Machine) return;
+        Safely(() => _stage.Scene.Parts([.. _sources.Health().Select(h => new FloorPart(h.Component, h.State switch
+        {
+            HealthState.READY => FloorPartState.Ready,
+            HealthState.STARTING => FloorPartState.Starting,
+            HealthState.DEGRADED or HealthState.PAUSED => FloorPartState.Attention,
+            HealthState.FAILED => FloorPartState.Failed,
+            _ => FloorPartState.Unknown
+        }))]));
+        _stage.Nudge();
     }
 
     // ---- the read, off the UI thread --------------------------------------------------------------------------------------------
