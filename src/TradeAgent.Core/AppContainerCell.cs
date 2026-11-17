@@ -779,7 +779,8 @@ public sealed class PrivateDesktop : IDisposable
     {
         var user = WindowsIdentity.GetCurrent().User!.Value;
         // THE DESKTOP: the account and this cell's container alone, nothing inherited from the station (P), labelled Low so the container may use it.
-        var desktopSd = Describe($"D:P(A;;GA;;;{user})(A;;GA;;;{containerSid})S:(ML;;NW;;;LW)", "the cell's desktop");
+        // MUTANT M3 (never land): the cell's desktop open to every AppContainer.
+        var desktopSd = Describe($"D:P(A;;GA;;;{user})(A;;GA;;;{containerSid})(A;;GA;;;AC)S:(ML;;NW;;;LW)", "the cell's desktop");
         // THE STATION, used only if this call is the one that makes it (Windows ignores it when the station exists, which it does whenever
         // the logon session made it first): the descriptor Windows itself gives that station (read 2026-11-14), the account in place of
         // its logon SID. It names NO container: the station is the logon session's, every cell's and other programs' alike, so no one
