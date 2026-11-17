@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- THE FLOOR DEMO (U-ui-alive): a developer's console program that writes SYNTHETIC ledger rows into a scratch home named
+       demo-*, so the floor can be watched without spending a model turn. It lives under tests/, never under src/; no packaging
+       script publishes it and no src project references it. It references Core only, and nothing of the test assemblies. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>TradeAgent.FloorDemo</AssemblyName>
+    <RootNamespace>TradeAgent.FloorDemo</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/TradeAgent.Core/TradeAgent.Core.csproj" />
+  </ItemGroup>
+</Project>
