@@ -425,6 +425,7 @@ public sealed class MainWindow : Window
         var width = _shellSurface.Bounds.Width;
         if (width <= 0) return;
         _sheet.Root.Width = Sheet.WidthIn(width);
+        _dock.Compact(width < Tokens.DockWordsFrom);
         var top = (_status?.Bounds.Height ?? 0) + Tokens.S3 + _notices.Bounds.Height;
         var bottom = _dock.Root.Bounds.Height + Tokens.S3;
         _floor.Reserve(top, _sheet.Open ? _sheet.Root.Width + Tokens.SheetGap : 0, bottom);
@@ -445,6 +446,14 @@ public sealed class MainWindow : Window
         {
             if (_finder is { Open: true }) _finder.Close();
             else _finder?.Show();
+            e.Handled = true;
+            return;
+        }
+        // CTRL (OR ⌘) AND A FIGURE GOES TO A PLACE, in the dock's order: 1 the floor … 6 the machine.
+        if ((e.KeyModifiers.HasFlag(KeyModifiers.Meta) || e.KeyModifiers.HasFlag(KeyModifiers.Control)) && e.Key is >= Key.D1 and <= Key.D6
+            && e.Key - Key.D1 is var nth && nth < Places.All.Count)
+        {
+            Select(Places.All[nth].Leaves[0].Page);
             e.Handled = true;
             return;
         }

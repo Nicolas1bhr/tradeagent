@@ -119,7 +119,9 @@ sealed class Dock
     readonly Dictionary<Place, StackPanel> _leafRows = new();
     readonly Dictionary<Page, Button> _leaves = new();
     readonly Dictionary<Place, Ellipse> _dots = new();
+    readonly Dictionary<Place, TextBlock> _words = new();
     Place? _shown;
+    bool _compact;
 
     public Dock(Action<Page> go, Action find)
     {
@@ -139,6 +141,7 @@ sealed class Dock
             word[!TextBlock.ForegroundProperty] = press[!TemplatedControl.ForegroundProperty];
             word[!TextBlock.FontWeightProperty] = press[!TemplatedControl.FontWeightProperty];
             press.Content = Ui.Row(Theme.S2, Icons.Boxed(icon, Theme.IconSize), word, dot);
+            _words[place.Place] = word;
             ToolTip.SetTip(press, place.Says);
             var first = place.Leaves[0].Page;
             press.Click += (_, _) => go(first);
@@ -204,6 +207,23 @@ sealed class Dock
             else leaf.Classes.Remove("on");
         }
         _shown = place.Place;
+        Words();
+    }
+
+    /// <summary>
+    /// IN A NARROW WINDOW the dock keeps every place and gives up words: only the place the owner is in is named, the others are
+    /// their drawings, each still named by its tooltip. Nothing is ever dropped from the dock to make it fit.
+    /// </summary>
+    public void Compact(bool compact)
+    {
+        if (_compact == compact) return;
+        _compact = compact;
+        Words();
+    }
+
+    void Words()
+    {
+        foreach (var (place, word) in _words) word.IsVisible = !_compact || place == _shown;
     }
 
     /// <summary>A small light on a place: something there asks to be looked at (tone), or nothing does (null).</summary>

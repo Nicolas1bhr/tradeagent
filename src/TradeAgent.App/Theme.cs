@@ -200,6 +200,9 @@ static partial class Theme
         GradientStops = { new GradientStop(Color.Parse("#801B213A"), 0), new GradientStop(Color.Parse("#40121626"), 0.5), new GradientStop(Color.Parse("#000B0D12"), 1) }
     };
 
+    /// <summary>The narrowest window in which the dock names every place; under it, only the place the owner is in.</summary>
+    public const double DockWordsFrom = 1160;
+
     /// <summary>The widest the setup pane is.</summary>
     public const double SetupMaxWidth = 960;
 
