@@ -70,8 +70,13 @@ public class ShellTests
         var save = owner.Root.GetLogicalDescendants().OfType<Button>().Single(b => b.Content as string == Labels.SaveDailyCap);
         Assert.False(save.IsEffectivelyVisible && save.GetLogicalAncestors().OfType<Control>().All(a => a.IsVisible));
         var before = host.Gateway.Settings;
+        // COUNTED AT THE PRESS ITSELF: whatever its own handler would or would not have done, it is not pressed.
+        var pressed = 0;
+        save.Click += (_, _) => pressed++;
 
         Shell.PointAt(save);
+
+        Assert.Equal(0, pressed);
 
         Assert.All(save.GetLogicalAncestors().OfType<Control>(), a => Assert.True(a.IsVisible));
         Assert.Contains("found", save.Classes);

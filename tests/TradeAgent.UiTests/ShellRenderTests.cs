@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Input;
+using Avalonia.LogicalTree;
 using Avalonia.Media.Imaging;
 using Avalonia.VisualTree;
 using TradeAgent.App;
@@ -143,6 +144,10 @@ public class ShellRenderTests(ITestOutputHelper output)
                     win.UpdateLayout();
                     Assert.Contains(Labels.SaveDailyCap, find.Found);
                     Assert.Equal(Labels.SaveDailyCap, find.Found[0]);
+                    // COUNTED AT THE PRESS ITSELF: Find shows where it is, and does not press it.
+                    var pressed = 0;
+                    var target = win.PageRoot(MainWindow.Page.Owner)!.GetLogicalDescendants().OfType<Button>().Single(b => b.Content as string == Labels.SaveDailyCap);
+                    target.Click += (_, _) => pressed++;
                     find.ChooseFirst();
                     Avalonia.Threading.Dispatcher.UIThread.RunJobs();
                     win.UpdateLayout();
@@ -157,6 +162,8 @@ public class ShellRenderTests(ITestOutputHelper output)
                     var seen = In(win.PageSheet!.Root, win);
                     Assert.True(seen.Contains(In(save, win).Center), $"the press Find went to is not on screen: {In(save, win)} in the sheet at {seen}");
                     Assert.Contains("found", save.Classes);
+                    Assert.Same(target, save);
+                    Assert.Equal(0, pressed);
                     Assert.False(Ui.IsArmed(save));
                     Assert.Same(before, host.Gateway.Settings);
                     Save(win, "window-find-went-to-a-press-1280x800.png");
