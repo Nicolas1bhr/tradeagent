@@ -275,7 +275,12 @@ sealed partial class FloorPage
             var bottom = _figures.IsVisible && _figures.Bounds.Height > 0 ? _figures.Bounds.Top - 14 : size.Height - 28;
             return (28, (float)top, (float)(size.Width - (_feedColumn.IsVisible ? FeedWidth - 14 : 28)), (float)bottom);
         };
-        _stage.Framed += Place;
+        _stage.Framed += frame => Safely(() => Place(frame));
+        _stage.Failed += why =>
+        {
+            _problem.Text = Labels.FloorNotDrawn + " " + why;
+            _problem.IsVisible = true;
+        };
         _stage.Pointed += id => { _pointed = id; Mark(); };
         _stage.Chosen += id => { _chosen = id == _chosen ? null : id; Mark(); Feed(); };
         Root.PropertyChanged += (_, e) =>
@@ -287,7 +292,21 @@ sealed partial class FloorPage
         };
 
         _look = new DispatcherTimer(Look, DispatcherPriority.Background, (_, _) => Read());
-        _clock = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, (_, _) => Tick());
+        _clock = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, (_, _) => Safely(Tick));
+    }
+
+    /// <summary>
+    /// A timer's or a frame's work, with whatever it throws said on the page and never let out: a handler nobody awaits that throws ends
+    /// the program, and this page is a picture — it does not get to take the owner's controls down with it.
+    /// </summary>
+    void Safely(Action work)
+    {
+        try { work(); }
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
+        {
+            _problem.Text = Labels.FloorNotRead + " " + (ex is TradeAgentException t ? t.Info.UserMessage : ex.Message);
+            _problem.IsVisible = true;
+        }
     }
 
     static TextBlock Figure() => new()
@@ -361,7 +380,7 @@ sealed partial class FloorPage
             Dispatcher.UIThread.Post(() =>
             {
                 _reading = false;
-                if (reading is not null) Apply(reading);
+                if (reading is not null) Safely(() => Apply(reading));
             });
         });
     }

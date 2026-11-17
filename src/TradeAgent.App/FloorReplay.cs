@@ -105,14 +105,15 @@ sealed partial class FloorPage
                     _replayNote.Text = problem is null ? Labels.FloorReplayNothing : Labels.FloorNotRead + " " + problem;
                     return;
                 }
-                BeginReplay(read);
+                Safely(() => BeginReplay(read));
+                if (_replay is null) return;
                 _replayLast = Stopwatch.GetTimestamp();
                 _replayTimer ??= new DispatcherTimer(TimeSpan.FromMilliseconds(33), DispatcherPriority.Background, (_, _) =>
                 {
                     var now = Stopwatch.GetTimestamp();
                     var dt = Stopwatch.GetElapsedTime(_replayLast, now).TotalSeconds;
                     _replayLast = now;
-                    ReplayStep(Math.Min(dt, 0.25));
+                    Safely(() => ReplayStep(Math.Min(dt, 0.25)));
                 });
                 _replayTimer.Start();
             });
