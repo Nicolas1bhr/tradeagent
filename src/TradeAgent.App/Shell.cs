@@ -261,7 +261,8 @@ sealed class Finder
     List<Entry> _entries = [];
     int _at;
 
-    sealed record Entry(string Words, string Under, Page Page, Control? Control);
+    /// <summary>One thing the search can find: the words it is found by, what is said under them, its page, and — for a press — the press itself.</summary>
+    internal sealed record Entry(string Words, string Under, Page Page, Control? Control);
 
     const int Shown = 9;
 
@@ -310,7 +311,7 @@ sealed class Finder
 
     public void Show()
     {
-        _entries = Read();
+        _entries = Read(_pages());
         _box.Text = "";
         Root.IsVisible = true;
         Fill();
@@ -323,12 +324,12 @@ sealed class Finder
     public FloorFrame.Pane? Pane(Visual stage) => Root.IsVisible ? Shell.PaneOf(_panel, stage, (float)Theme.RadiusLg.TopLeft) : null;
 
     /// <summary>Every page by its name, then every press on every page by the words it wears at rest, each once per page.</summary>
-    List<Entry> Read()
+    internal static List<Entry> Read(IEnumerable<(Page Page, Control Root)> pages)
     {
         var entries = new List<Entry>();
         foreach (var (page, word) in Places.Pages)
             entries.Add(new Entry(word, Labels.FindInPlace(Places.Of(page).Name), page, null));
-        foreach (var (page, root) in _pages())
+        foreach (var (page, root) in pages)
         {
             var word = Places.Word(page);
             var seen = new HashSet<string>(StringComparer.Ordinal);
