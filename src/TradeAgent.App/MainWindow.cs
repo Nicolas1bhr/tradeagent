@@ -788,27 +788,38 @@ public sealed class MainWindow : Window
     /// A PAGE COMES IN (<c>U-ui-alive</c>): it rises a few pixels into place as it clears. Nothing is rebuilt and nothing waits on it — the
     /// page is already the page, updated and pressable, from its first frame; only how it is painted changes for a fifth of a second.
     /// </summary>
-    static void ComeIn(Control page)
+    void ComeIn(Control page)
     {
-        var rise = new TranslateTransform(0, Tokens.PageRise);
-        page.RenderTransform = rise;
-        page.Opacity = 0;
-        var animation = new Animation
+        // A PAGE LEFT AND COME BACK TO WITHIN ITS FIFTH OF A SECOND is coming in twice at once. Only the latest coming-in tidies up after
+        // itself, and it is held to nothing it throws: how a page is painted for a moment must never be what ends the program.
+        var turn = _comings[page] = _comings.GetValueOrDefault(page) + 1;
+        try
         {
-            Duration = Tokens.PageIn, Easing = new CubicEaseOut(), FillMode = FillMode.Forward,
-            Children =
+            page.RenderTransform = new TranslateTransform(0, Tokens.PageRise);
+            page.Opacity = 0;
+            var animation = new Animation
             {
-                new KeyFrame { Cue = new Cue(0), Setters = { new Setter(Visual.OpacityProperty, 0.0), new Setter(TranslateTransform.YProperty, Tokens.PageRise) } },
-                new KeyFrame { Cue = new Cue(1), Setters = { new Setter(Visual.OpacityProperty, 1.0), new Setter(TranslateTransform.YProperty, 0.0) } }
-            }
-        };
-        _ = animation.RunAsync(page).ContinueWith(_ => Dispatcher.UIThread.Post(() =>
-        {
-            // Left as it was built: no transform and full strength, whatever the animation's last frame was.
-            page.Opacity = 1;
-            page.RenderTransform = null;
-        }), TaskScheduler.Default);
+                Duration = Tokens.PageIn, Easing = new CubicEaseOut(), FillMode = FillMode.Forward,
+                Children =
+                {
+                    new KeyFrame { Cue = new Cue(0), Setters = { new Setter(Visual.OpacityProperty, 0.0), new Setter(TranslateTransform.YProperty, Tokens.PageRise) } },
+                    new KeyFrame { Cue = new Cue(1), Setters = { new Setter(Visual.OpacityProperty, 1.0), new Setter(TranslateTransform.YProperty, 0.0) } }
+                }
+            };
+            _ = animation.RunAsync(page).ContinueWith(_ => Dispatcher.UIThread.Post(() => Settle(page, turn)), TaskScheduler.Default);
+        }
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException)) { Settle(page, turn); }
     }
+
+    /// <summary>The page as it was built: no transform and full strength, whatever the animation's last frame was — unless it has since begun coming in again.</summary>
+    void Settle(Control page, int turn)
+    {
+        if (_comings.GetValueOrDefault(page) != turn) return;
+        page.Opacity = 1;
+        page.RenderTransform = null;
+    }
+
+    readonly Dictionary<Control, int> _comings = new();
 
     /// <summary>The last tick's status, so a page selected between ticks is brought up to date at once.</summary>
     GatewayStatus? _lastStatus;
