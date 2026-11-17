@@ -2,8 +2,13 @@ using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Animation;
+using Avalonia.Animation.Easings;
+using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Shapes;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using TradeAgent.Core;
 using TradeAgent.Gateway;
@@ -16,6 +21,8 @@ using TradeAgent.Provisioning;
 //     and this file needs System.IO.Path to find ATAS.
 using Tokens = TradeAgent.App.Theme;
 using Ellipse = Avalonia.Controls.Shapes.Ellipse;
+using Path = System.IO.Path;
+using IconPath = Avalonia.Controls.Shapes.Path;
 
 namespace TradeAgent.App;
 
@@ -36,7 +43,7 @@ namespace TradeAgent.App;
 /// </summary>
 public sealed class MainWindow : Window
 {
-    internal enum Page { Chat, Organisation, Work, Costs, Dashboard, Board, Report, Inbox, Owner, ForYou, Settings, Activity, Checks, Oversight }
+    internal enum Page { Floor, Chat, Organisation, Work, Costs, Dashboard, Board, Report, Inbox, Owner, ForYou, Settings, Activity, Checks, Oversight }
 
     /// <summary>
     /// THE RAIL, IN ORDER (<c>U-settings-shed</c>; R24 § 4.7), as data so a test reads the order the window builds:
@@ -50,9 +57,11 @@ public sealed class MainWindow : Window
     /// <item>Oversight last: the owner's word for his private line, his alone and never shown to an agent (U-org-watcher-b).</item>
     /// </list>
     /// <c>U-org-surface-a</c> put the organisation first: Organisation, Work and Costs follow Chat (R24 § 4.7).
+    /// <c>U-ui-alive</c> put the floor before them all: the organisation drawn as a place, lit where it is working, is what the app opens on.
     /// </summary>
     internal static readonly IReadOnlyList<(Page Page, string Label)> Rail =
     [
+        (Page.Floor, Labels.NavFloor),
         (Page.Chat, "Chat"),
         (Page.Organisation, Labels.NavOrganisation),
         (Page.Work, Labels.NavWork),
@@ -68,6 +77,42 @@ public sealed class MainWindow : Window
         (Page.Checks, "Checks"),
         (Page.Oversight, "Oversight")
     ];
+
+    /// <summary>
+    /// THE RAIL'S GROUPS (<c>U-ui-alive</c>): the same pages in the same order as <see cref="Rail"/> — a test holds the two together — under
+    /// the few words that say whose they are. Fourteen names in one column read as a list to be searched; five short groups read as a place.
+    /// The first group needs no name, and the last is the owner's private line, alone under its own.
+    /// </summary>
+    internal static readonly IReadOnlyList<(string? Title, IReadOnlyList<Page> Pages)> RailGroups =
+    [
+        (null, [Page.Floor, Page.Chat]),
+        (Labels.RailOrganisation, [Page.Organisation, Page.Work, Page.Costs]),
+        (Labels.RailTrading, [Page.Dashboard, Page.Board, Page.Report]),
+        (Labels.RailYours, [Page.Inbox, Page.Owner, Page.ForYou]),
+        (Labels.RailSystem, [Page.Settings, Page.Activity, Page.Checks]),
+        (Labels.RailPrivate, [Page.Oversight])
+    ];
+
+    /// <summary>Each page's drawing in the rail (<see cref="Icons"/>).</summary>
+    internal static string RailIcon(Page page) => page switch
+    {
+        Page.Floor => Icons.Floor,
+        Page.Chat => Icons.Chat,
+        Page.Organisation => Icons.Organisation,
+        Page.Work => Icons.Work,
+        Page.Costs => Icons.Costs,
+        Page.Dashboard => Icons.Dashboard,
+        Page.Board => Icons.Board,
+        Page.Report => Icons.Report,
+        Page.Inbox => Icons.Inbox,
+        Page.Owner => Icons.Owner,
+        Page.ForYou => Icons.ForYou,
+        Page.Settings => Icons.Settings,
+        Page.Activity => Icons.Activity,
+        Page.Checks => Icons.Checks,
+        Page.Oversight => Icons.Oversight,
+        _ => Icons.Checks
+    };
 
     readonly AppHost _host;
 
@@ -129,8 +174,10 @@ public sealed class MainWindow : Window
     Button? _updateLater;
 
     // rail
-    readonly StackPanel _navStack = new() { Spacing = 2 };
+    readonly StackPanel _navStack = new() { Spacing = 1 };
     readonly Dictionary<Page, Button> _nav = new();
+    /// <summary>Each rail entry's drawing, kept so the page being shown can have its line in the accent (see <see cref="Select"/>).</summary>
+    readonly Dictionary<Page, IconPath> _navIcons = new();
     readonly Ellipse _healthDot = new()
     {
         Width = 7, Height = 7, Fill = Tokens.Neutral, VerticalAlignment = VerticalAlignment.Center
@@ -142,7 +189,10 @@ public sealed class MainWindow : Window
 
     // pages
     readonly Grid _pageHost = new();
+    /// <summary>The frame round the page host: padded for a page of words, edge to edge for the floor (see <see cref="Select"/>).</summary>
+    readonly Border _pageFrame = new();
     readonly Dictionary<Page, Control> _pages = new();
+    FloorPage? _floor;
     ChatView? _chat;
     OrganisationPage? _organisation;
     WorkPage? _work;
@@ -355,31 +405,44 @@ public sealed class MainWindow : Window
 
         BuildPages();
 
-        var body = new Grid { ColumnDefinitions = new ColumnDefinitions("210,*"), [Grid.RowProperty] = 5 };
-        body.Children.Add(BuildRail());
-        body.Children.Add(new Border
+        var body = new Grid
         {
-            Padding = new Thickness(Tokens.S6),
-            Child = _pageHost,
-            [Grid.ColumnProperty] = 1
-        });
+            ColumnDefinitions = new ColumnDefinitions($"{Tokens.RailWidth.ToString(System.Globalization.CultureInfo.InvariantCulture)},*"),
+            [Grid.RowProperty] = 5
+        };
+        body.Children.Add(BuildRail());
+        _pageFrame.Child = _pageHost;
+        _pageFrame[Grid.ColumnProperty] = 1;
+        body.Children.Add(_pageFrame);
         _shellSurface.Children.Add(body);
 
-        // Chat is the landing page. It is the thing that replaced the console, and when no agent is
-        // running it is the one screen with a designed answer to "so how do I start?". Nothing is
-        // lost by not landing on the dashboard: mode, platform, account and AI state all live in the
-        // chrome, which is on screen whatever page is selected.
-        Select(Page.Chat);
+        // THE FLOOR IS THE LANDING PAGE (U-ui-alive). It is the organisation itself, lit where it is working — the answer to "what is it
+        // doing?" before anything is pressed — and when no AI is running it carries the same "Start the AI" the Chat page does, so the
+        // app still opens on a designed answer to "so how do I start?". Mode, platform, account and AI state all live in the chrome,
+        // which is on screen whatever page is selected.
+        Select(Page.Floor);
     }
 
     Control BuildHeader()
     {
-        var brand = new TextBlock
-        {
-            Text = "TradeAgent", FontSize = Tokens.H2, FontFamily = Tokens.SansDisplay,
-            FontWeight = FontWeight.SemiBold, Foreground = Tokens.Text,
-            VerticalAlignment = VerticalAlignment.Center
-        };
+        // The mark and the name. The mark is one cell with its top lit: the thing the floor is made of.
+        var brand = Ui.Row(Tokens.S2,
+            Icons.Mark(),
+            new TextBlock
+            {
+                Text = "TradeAgent", FontSize = Tokens.H2, FontFamily = Tokens.SansDisplay,
+                FontWeight = FontWeight.SemiBold, Foreground = Tokens.Text, LetterSpacing = Tokens.H2Tracking,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+        brand.VerticalAlignment = VerticalAlignment.Center;
+
+        // THE AI LINE TAKES WHAT IS LEFT AND IS CUT WITH AN ELLIPSIS, never run under the stop button: its reason can be a whole sentence
+        // ("paused — no account has been chosen — choose one on the Settings page"), and the full sentence is on the Dashboard and in
+        // the line's own tooltip.
+        var ai = new DockPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(Tokens.S4, 0, Tokens.S4, 0) };
+        ai.Children.Add(Ui.With(_aiDot, d => { d.Margin = new Thickness(0, 0, Tokens.S2, 0); DockPanel.SetDock(d, Dock.Left); }));
+        ai.Children.Add(_metaAi);
+        ai[Grid.ColumnProperty] = 1;
 
         var meta = Ui.Row(Tokens.S4,
             brand,
@@ -390,9 +453,7 @@ public sealed class MainWindow : Window
             Sep(),
             Ui.With(Ui.Row(Tokens.S2, MetaLabel("Account"), _metaAccount),
                 r => r.VerticalAlignment = VerticalAlignment.Center),
-            Sep(),
-            Ui.With(Ui.Row(Tokens.S2, _aiDot, _metaAi),
-                r => r.VerticalAlignment = VerticalAlignment.Center));
+            Sep());
         meta.VerticalAlignment = VerticalAlignment.Center;
 
         // The kill switch lives in the chrome, not on a page. A stop that is one nav click away is
@@ -406,12 +467,13 @@ public sealed class MainWindow : Window
 
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
         grid.Children.Add(meta);
+        grid.Children.Add(ai);
         grid.Children.Add(_stopButton);
 
         return new Border
         {
-            Height = 56,
-            Background = Tokens.BgElevated,
+            Height = Tokens.HeaderHeight,
+            Background = Tokens.BgRail,
             BorderBrush = Tokens.Line,
             BorderThickness = new Thickness(0, 0, 0, 1),
             Padding = new Thickness(Tokens.S5, 0),
@@ -518,7 +580,14 @@ public sealed class MainWindow : Window
 
     Control BuildRail()
     {
-        foreach (var (page, label) in Rail) AddNav(page, label);
+        // GROUP BY GROUP, in the rail's own order: a quiet word over each group but the first.
+        var labels = Rail.ToDictionary(r => r.Page, r => r.Label);
+        foreach (var (title, pages) in RailGroups)
+        {
+            if (title is not null)
+                _navStack.Children.Add(Ui.With(Ui.Eyebrow(title), t => t.Margin = new Thickness(Tokens.S3, Tokens.S3, 0, 2)));
+            foreach (var page in pages) AddNav(page, labels[page]);
+        }
 
         var summary = new Button
         {
@@ -536,8 +605,14 @@ public sealed class MainWindow : Window
         };
         summary.Click += (_, _) => Select(Page.Checks);
 
+        // THE NAMES SCROLL IF THE WINDOW IS SHORT, never clip: at the smallest window the owner can make, the last group is still reachable.
         var rail = new Grid { RowDefinitions = new RowDefinitions("*,Auto") };
-        rail.Children.Add(new Border { Padding = new Thickness(Tokens.S3), Child = _navStack });
+        rail.Children.Add(new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = new Border { Padding = new Thickness(Tokens.S2, Tokens.S2), Child = _navStack }
+        });
         rail.Children.Add(new Border
         {
             BorderBrush = Tokens.Line,
@@ -558,22 +633,33 @@ public sealed class MainWindow : Window
 
     void AddNav(Page page, string label)
     {
-        // Content is a bare string on purpose: the theme paints the selected state through the
-        // "on" class on the button, and a TextBlock child of my own would take the app-level
-        // TextBlock foreground instead and never turn indigo.
-        var b = new Button
+        // THE WORD AND THE DRAWING TAKE THE BUTTON'S OWN COLOUR AND WEIGHT, bound, never set: the theme paints hover and the selected
+        // state through classes on the button, and a TextBlock child left to itself takes the app-level TextBlock foreground instead
+        // and never changes with them.
+        var b = new Button { Classes = { "nav" }, HorizontalAlignment = HorizontalAlignment.Stretch };
+        var icon = Icons.Line(RailIcon(page));
+        icon[!Shape.StrokeProperty] = b[!TemplatedControl.ForegroundProperty];
+        var word = new TextBlock
         {
-            Content = label,
-            Classes = { "nav" },
-            HorizontalAlignment = HorizontalAlignment.Stretch
+            Text = label, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis,
+            [Grid.ColumnProperty] = 1
+        };
+        word[!TextBlock.ForegroundProperty] = b[!TemplatedControl.ForegroundProperty];
+        word[!TextBlock.FontWeightProperty] = b[!TemplatedControl.FontWeightProperty];
+        b.Content = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("Auto,*"),
+            Children = { Ui.With(Icons.Boxed(icon, Tokens.IconSize), i => i.Margin = new Thickness(0, 0, Tokens.S3, 0)), word }
         };
         b.Click += (_, _) => Select(page);
         _nav[page] = b;
+        _navIcons[page] = icon;
         _navStack.Children.Add(b);
     }
 
     void BuildPages()
     {
+        _floor = new FloorPage(FloorSources.For(_host), StartOrStopAgentAsync, Select);
         _chat = new ChatView(_host, StartOrStopAgentAsync);
         var org = OrgSurfaceSources.For(_host);
         _organisation = new OrganisationPage(org);
@@ -591,6 +677,7 @@ public sealed class MainWindow : Window
         _checks = new ChecksPage(_host);
         _oversightPage = new OversightPage(OversightSources.For(_host));
 
+        Add(Page.Floor, _floor.Root);
         Add(Page.Chat, _chat.Root);
         Add(Page.Organisation, _organisation.Root);
         Add(Page.Work, _work.Root);
@@ -609,6 +696,8 @@ public sealed class MainWindow : Window
         void Add(Page page, Control control)
         {
             control.IsVisible = false;
+            // A PAGE OF WORDS IS NO WIDER THAN IT CAN BE READ, and sits in the middle of whatever is left; the floor takes everything.
+            if (page != Page.Floor) control.MaxWidth = Tokens.PageMaxWidth;
             _pages[page] = control;
             _pageHost.Children.Add(control);
         }
@@ -616,12 +705,22 @@ public sealed class MainWindow : Window
 
     void Select(Page page)
     {
+        var was = _shown;
         foreach (var (key, button) in _nav)
         {
             if (key == page) { if (!button.Classes.Contains("on")) button.Classes.Add("on"); }
             else button.Classes.Remove("on");
+            // The page being shown has its drawing in the accent: the one small light in the rail. Every other drawing follows its button.
+            if (!_navIcons.TryGetValue(key, out var icon)) continue;
+            if (key == page) icon.Stroke = Tokens.Accent;
+            else icon[!Shape.StrokeProperty] = button[!TemplatedControl.ForegroundProperty];
         }
+        // The floor runs edge to edge; a page of words keeps its margins.
+        _pageFrame.Padding = page == Page.Floor ? default : new Thickness(Tokens.S6, Tokens.S6, Tokens.S6, 0);
         foreach (var (key, control) in _pages) control.IsVisible = key == page;
+        _floor?.Shown(page == Page.Floor);
+        if (was != page || !_everShown) ComeIn(_pages[page]);
+        _everShown = true;
         // BROUGHT UP TO DATE AS IT IS SHOWN (U-perf-scan): a page the tick left alone while it was hidden is never shown stale.
         _shown = page;
         if (_lastStatus is { } status)
@@ -654,6 +753,7 @@ public sealed class MainWindow : Window
 
         var (aiText, aiTone) = AiLine(status, _host.Gateway.EarlierLiveSetting);
         _metaAi.Text = aiText;
+        ToolTip.SetTip(_metaAi, aiText);
         _aiDot.Fill = aiTone switch
         {
             AiTone.Allowed => Tokens.Positive,
@@ -680,7 +780,35 @@ public sealed class MainWindow : Window
     }
 
     /// <summary>The page shown in the page host; the rail's first until the owner presses another.</summary>
-    Page _shown = Page.Chat;
+    Page _shown = Page.Floor;
+
+    bool _everShown;
+
+    /// <summary>
+    /// A PAGE COMES IN (<c>U-ui-alive</c>): it rises a few pixels into place as it clears. Nothing is rebuilt and nothing waits on it — the
+    /// page is already the page, updated and pressable, from its first frame; only how it is painted changes for a fifth of a second.
+    /// </summary>
+    static void ComeIn(Control page)
+    {
+        var rise = new TranslateTransform(0, Tokens.PageRise);
+        page.RenderTransform = rise;
+        page.Opacity = 0;
+        var animation = new Animation
+        {
+            Duration = Tokens.PageIn, Easing = new CubicEaseOut(), FillMode = FillMode.Forward,
+            Children =
+            {
+                new KeyFrame { Cue = new Cue(0), Setters = { new Setter(Visual.OpacityProperty, 0.0), new Setter(TranslateTransform.YProperty, Tokens.PageRise) } },
+                new KeyFrame { Cue = new Cue(1), Setters = { new Setter(Visual.OpacityProperty, 1.0), new Setter(TranslateTransform.YProperty, 0.0) } }
+            }
+        };
+        _ = animation.RunAsync(page).ContinueWith(_ => Dispatcher.UIThread.Post(() =>
+        {
+            // Left as it was built: no transform and full strength, whatever the animation's last frame was.
+            page.Opacity = 1;
+            page.RenderTransform = null;
+        }), TaskScheduler.Default);
+    }
 
     /// <summary>The last tick's status, so a page selected between ticks is brought up to date at once.</summary>
     GatewayStatus? _lastStatus;
@@ -695,6 +823,7 @@ public sealed class MainWindow : Window
     {
         switch (page)
         {
+            case Page.Floor: _floor?.Update(status); break;
             case Page.Chat: _chat?.Update(); break;
             case Page.Organisation: _organisation?.Update(); break;
             case Page.Work: _work?.Update(); break;

@@ -61,7 +61,7 @@ public class RailOrderTests
     public void The_rail_lists_the_pages_in_order()
     {
         Assert.Equal(
-            ["Chat", TradeAgent.Core.Labels.NavOrganisation, TradeAgent.Core.Labels.NavWork, TradeAgent.Core.Labels.NavCosts, "Dashboard",
+            [TradeAgent.Core.Labels.NavFloor, "Chat", TradeAgent.Core.Labels.NavOrganisation, TradeAgent.Core.Labels.NavWork, TradeAgent.Core.Labels.NavCosts, "Dashboard",
                 TradeAgent.Core.Labels.BoardPage, "Daily report", "Inbox", TradeAgent.Core.Labels.OwnerPage, TradeAgent.Core.Labels.NavForYou, "Settings",
                 "Activity", "Checks", "Oversight"],
             MainWindow.Rail.Select(r => r.Label));
@@ -69,5 +69,20 @@ public class RailOrderTests
         // EVERY PAGE ONCE: a page the enum has and the rail lacks is a page nobody can reach.
         Assert.Equal(Enum.GetValues<MainWindow.Page>().Order(), MainWindow.Rail.Select(r => r.Page).Order());
         Assert.Equal(MainWindow.Rail.Count, MainWindow.Rail.Select(r => r.Page).Distinct().Count());
+    }
+
+    /// <summary>
+    /// THE RAIL'S GROUPS ARE THE RAIL (<c>U-ui-alive</c>): the same pages in the same order, only gathered under a few words — so grouping
+    /// the rail can never drop a page, add one or move one past another. The first group has no name; Oversight is alone in the last.
+    /// </summary>
+    [Fact]
+    public void The_rails_groups_hold_the_rails_pages_in_the_rails_order()
+    {
+        Assert.Equal(MainWindow.Rail.Select(r => r.Page), MainWindow.RailGroups.SelectMany(g => g.Pages));
+        Assert.Null(MainWindow.RailGroups[0].Title);
+        Assert.All(MainWindow.RailGroups.Skip(1), g => Assert.False(string.IsNullOrWhiteSpace(g.Title)));
+        Assert.Equal([MainWindow.Page.Oversight], MainWindow.RailGroups[^1].Pages);
+        // And every page has a drawing of its own beside its name.
+        Assert.Equal(MainWindow.Rail.Count, MainWindow.Rail.Select(r => MainWindow.RailIcon(r.Page)).Distinct().Count());
     }
 }

@@ -12,6 +12,9 @@
     <PackageReference Include="Avalonia" Version="12.1.4" />
     <PackageReference Include="Avalonia.Desktop" Version="12.1.4" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.4" />
+    <!-- THE APP'S OWN TYPE (U-ui-alive): Inter, carried in the app, so the letters and their widths are the same on Windows, the Mac
+         and the Linux host, which has no Segoe and fell through to whatever sans the machine had. Avalonia's own package of it. -->
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.4" />
   </ItemGroup>
   <ItemGroup>
     <!-- THE HEAD-START KIT A BUILD CARRIES (U-kit-socket): the repository's kit/, beside the app's programs, installed at the first
