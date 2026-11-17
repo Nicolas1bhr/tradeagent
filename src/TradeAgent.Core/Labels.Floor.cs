@@ -65,20 +65,15 @@ public static partial class Labels
     public const string FloorNothingOfIts = "Nothing of its is among the last things recorded.";
     public const string FloorNothingYet = "Nothing has happened on this floor yet.";
     public const string FloorNotRead = "The organisation's records could not be read just now.";
+    public const string FloorNotDrawn = "The floor could not be drawn on this computer, so it is left dark. Every other page works as before.";
     public const string FloorEmpty = "No organisation yet: nothing has been chartered in this home.";
 
     public const string FloorStart = "Start the AI";
-
-    public const string FloorLegendWorking = "a turn is open";
-    public const string FloorLegendActive = "active";
-    public const string FloorLegendDormant = "dormant";
-    public const string FloorLegendVacant = "nobody at its head";
 
     // ---- the figures along the bottom -------------------------------------------------------------------------------------------
 
     public const string FloorTurnsToday = "AI turns today";
     public const string FloorSpendToday = "AI spend today";
-    public const string FloorSpendEstimated = "AI spend today, estimated";
     public const string FloorOpenWork = "Tasks open";
     public const string FloorToJudge = "Deliveries waiting to be judged";
     public const string FloorUnknown = "unknown";

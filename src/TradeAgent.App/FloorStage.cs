@@ -44,6 +44,21 @@ sealed class FloorStage : Control
     /// <summary>A cell was pressed, or the floor beside every cell (null).</summary>
     public event Action<string?>? Chosen;
 
+    /// <summary>
+    /// THE FLOOR COULD NOT BE DRAWN, and why. Raised once, on the UI thread; from then on the stage draws nothing. A picture that will
+    /// not paint must never be what ends the program: the pages beside it are the owner's controls, and they go on working.
+    /// </summary>
+    public event Action<string>? Failed;
+
+    int _failed;
+
+    void Fail(Exception ex)
+    {
+        if (Interlocked.Exchange(ref _failed, 1) != 0) return;
+        var why = ex.GetBaseException().Message;
+        Dispatcher.UIThread.Post(() => Failed?.Invoke(why));
+    }
+
     FloorFrame? _frame;
     bool _shown, _pumping, _dirty = true;
 
@@ -104,7 +119,13 @@ sealed class FloorStage : Control
     void Tick(TimeSpan _)
     {
         _pumping = false;
-        if (!_shown || !IsEffectivelyVisible) { _lastTick = 0; return; }
+        if (!_shown || !IsEffectivelyVisible || Volatile.Read(ref _failed) != 0) { _lastTick = 0; return; }
+        try { Beat(); }
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException)) { Fail(ex); }
+    }
+
+    void Beat()
+    {
 
         var now = Stopwatch.GetTimestamp();
         var dt = _lastTick == 0 ? 1 / 60f : (float)Stopwatch.GetElapsedTime(_lastTick, now).TotalSeconds;
@@ -170,7 +191,7 @@ sealed class FloorStage : Control
     {
         // Something to hit, so the pointer reaches the stage wherever on it it is.
         context.FillRectangle(Brushes.Transparent, new Rect(Bounds.Size));
-        if (_frame is { } frame) context.Custom(new Paint(new Rect(Bounds.Size), frame, this));
+        if (_frame is { } frame && Volatile.Read(ref _failed) == 0) context.Custom(new Paint(new Rect(Bounds.Size), frame, this));
     }
 
     // ---- the pointer ------------------------------------------------------------------------------------------------------------
@@ -256,8 +277,13 @@ sealed class FloorStage : Control
         {
             if (context.TryGetFeature<ISkiaSharpApiLeaseFeature>() is not { } skia) return;
             using var lease = skia.Lease();
+            var canvas = lease.SkCanvas;
             var started = Stopwatch.GetTimestamp();
-            FloorPaint.Paint(lease.SkCanvas, frame);
+            // Whatever the painter had saved is put back even if it throws half way: the canvas is the whole window's, not the floor's.
+            var saved = canvas.Save();
+            try { FloorPaint.Paint(canvas, frame); }
+            catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException)) { stage.Fail(ex); }
+            finally { canvas.RestoreToCount(saved); }
             stage.Painted(Stopwatch.GetTimestamp() - started);
         }
     }
