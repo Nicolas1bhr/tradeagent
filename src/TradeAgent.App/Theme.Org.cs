@@ -21,8 +21,6 @@ static partial class Theme
     /// <summary>The cost lines are a step thicker than a hairline: they are the page's picture.</summary>
     public const double CostBar = 4;
 
-    /// <summary>The column a position's state dot sits in, and the dot's size.</summary>
-    public const double StateDot = 8;
 
     /// <summary>A mandate's time line: its height, and the mark that says "now" on it.</summary>
     public const double TimeLineHeight = 14, TimeLineNow = 9;

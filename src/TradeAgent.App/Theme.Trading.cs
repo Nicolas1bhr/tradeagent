@@ -21,8 +21,6 @@ static partial class Theme
     /// <summary>How far apart two figures in a row stand, and two readouts on one line.</summary>
     public const double FigureGap = 32;
 
-    /// <summary>The dot beside a state set large: big enough to be seen from across the desk, no bigger than a letter.</summary>
-    public const double StateDot = 9;
 
     /// <summary>The thirteen parts' strip at the head of System health: one dot each, this far apart.</summary>
     public const double StripDot = 8, StripGap = 6;
