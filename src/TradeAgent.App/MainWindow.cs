@@ -641,6 +641,7 @@ public sealed class MainWindow : Window
         // Whatever the floor was replaying, a page is the present's: its figures beside a floor showing last week would be two times at once.
         if (sheet) _floor?.Present();
         _sheet?.Show(sheet);
+        if (_floor is not null) _floor.Stage.Behind = sheet;
         _floor?.Go(page);
         if (sheet && (was != page || !_everShown)) ComeIn(_pages[page]);
         _everShown = true;

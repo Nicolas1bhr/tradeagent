@@ -78,18 +78,56 @@ static class FloorPaint
         canvas.Save();
         canvas.ClipRect(new SKRect(0, 0, f.Width, f.Height));
         canvas.Clear(Bg);
-        if (f.Glass.Length == 0) Scene(canvas, f, full);
+        // Without a graphics card no pane shows the floor a second time, so the floor is simply drawn, once, with nothing kept of it.
+        if (f.Glass.Length == 0 || !full)
+        {
+            Scene(canvas, f, full);
+            foreach (var pane in f.Glass) Glass(canvas, f, null, pane);
+        }
         else
         {
-            // THE FLOOR IS DRAWN ONCE AND SHOWN AS OFTEN AS THE GLASS NEEDS IT: behind every pane it is seen again, out of focus and
-            // bent at the pane's rim. Recorded once, so a pane costs the painting and never the working-out.
+            // THE FLOOR IS WORKED OUT ONCE AND SHOWN TWICE: as it is, and — small, a sixth of its size, and out of focus — as what
+            // every pane of glass shows of it. One small picture for all the panes: a pane costs the drawing of an image, never the
+            // floor again, so the glass is as cheap on a frame with four panes as on a frame with one.
             using var recorder = new SKPictureRecorder();
             Scene(recorder.BeginRecording(new SKRect(0, 0, f.Width, f.Height)), f, full);
             using var floor = recorder.EndRecording();
             canvas.DrawPicture(floor);
-            foreach (var pane in f.Glass) Glass(canvas, f, floor, pane, full);
+            using var behind = Behind(floor, f.Width, f.Height);
+            foreach (var pane in f.Glass) Glass(canvas, f, behind, pane);
         }
         canvas.Restore();
+    }
+
+    /// <summary>How much smaller than the floor the picture behind the glass is kept. Out of focus, nothing finer than this is seen.</summary>
+    const float BehindScale = 1 / 6f;
+
+    // The small surface the floor is drawn on for the glass, kept between frames: the painter's own, one per thread that paints.
+    [ThreadStatic] static SKSurface? _behind;
+    [ThreadStatic] static int _behindWide, _behindHigh;
+
+    /// <summary>The floor, a sixth of its size and out of focus: what is seen through every pane of this frame.</summary>
+    static SKImage Behind(SKPicture floor, float width, float height)
+    {
+        int wide = Math.Max(8, (int)MathF.Ceiling(width * BehindScale)), high = Math.Max(8, (int)MathF.Ceiling(height * BehindScale));
+        if (_behind is null || wide != _behindWide || high != _behindHigh)
+        {
+            _behind?.Dispose();
+            _behind = SKSurface.Create(new SKImageInfo(wide, high, SKColorType.Rgba8888, SKAlphaType.Premul));
+            _behindWide = wide;
+            _behindHigh = high;
+        }
+        var small = _behind.Canvas;
+        small.Clear(Bg);
+        // Out of focus, and its colour deepened here, where it is small: what is lit behind glass glows through it.
+        using var blur = SKImageFilter.CreateBlur(GlassBlur * BehindScale, GlassBlur * BehindScale);
+        using var deepen = SKColorFilter.CreateColorMatrix(Saturate(1.75f, 1.18f));
+        using var soft = new SKPaint { ImageFilter = blur, ColorFilter = deepen };
+        small.SaveLayer(soft);
+        small.Scale(BehindScale);
+        small.DrawPicture(floor);
+        small.Restore();
+        return _behind.Snapshot();
     }
 
     static void Scene(SKCanvas canvas, FloorFrame f, bool full)
@@ -204,8 +242,9 @@ static class FloorPaint
     /// <para>On a machine that draws without a graphics card the floor is not drawn again: the pane is the window's own dark, nearly
     /// whole, with its rim.</para>
     /// </summary>
-    static void Glass(SKCanvas canvas, FloorFrame f, SKPicture floor, in FloorFrame.Pane pane, bool full)
+    static void Glass(SKCanvas canvas, FloorFrame f, SKImage? behind, in FloorFrame.Pane pane)
     {
+        var full = behind is not null;
         var strength = Math.Clamp(pane.Strength, 0, 1);
         if (strength <= 0.01f || pane.Width < 2 || pane.Height < 2) return;
         var rect = new SKRect(pane.X, pane.Y, pane.X + pane.Width, pane.Y + pane.Height);
@@ -228,14 +267,12 @@ static class FloorPaint
         if (full)
         {
             // THE BODY: the floor out of focus, its colour deepened.
-            using var blur = SKImageFilter.CreateBlur(GlassBlur, GlassBlur);
-            using var deepen = SKColorFilter.CreateColorMatrix(Saturate(1.75f, 1.18f));
-            using var body = new SKPaint { ImageFilter = blur, ColorFilter = deepen, Color = SKColors.White.WithAlpha((byte)(255 * strength)) };
-            canvas.SaveLayer(rect, body);
-            canvas.DrawPicture(floor);
-            canvas.Restore();
+            var whole = new SKRect(0, 0, f.Width, f.Height);
+            using var body = new SKPaint { Color = SKColors.White.WithAlpha((byte)(255 * strength)) };
+            canvas.DrawImage(behind, whole, Smooth, body);
 
-            // THE RIM, WHERE THE GLASS IS THICK: the floor again, larger than it is and nearly sharp, in a band along the edge.
+            // THE RIM, WHERE THE GLASS IS THICK: what is behind it again, larger than it is, in a band along the edge — so a light
+            // behind the pane breaks at the rim the way it does at the edge of real glass.
             var band = Math.Min(GlassRim, Math.Min(pane.Width, pane.Height) / 2 - 1);
             if (band > 3)
             {
@@ -244,12 +281,8 @@ static class FloorPaint
                 using var innerRound = new SKRoundRect(inner, Math.Max(0, radius - band), Math.Max(0, radius - band));
                 canvas.Save();
                 canvas.ClipRoundRect(innerRound, SKClipOperation.Difference, true);
-                using var soft = SKImageFilter.CreateBlur(3.5f, 3.5f);
-                using var bent = new SKPaint { ImageFilter = soft, ColorFilter = deepen, Color = SKColors.White.WithAlpha((byte)(255 * strength)) };
-                canvas.SaveLayer(rect, bent);
                 canvas.Scale(GlassLens, GlassLens, rect.MidX, rect.MidY);
-                canvas.DrawPicture(floor);
-                canvas.Restore();
+                canvas.DrawImage(behind, whole, Smooth, body);
                 canvas.Restore();
             }
         }
@@ -301,8 +334,11 @@ static class FloorPaint
         edge.Shader.Dispose();
     }
 
+    /// <summary>How the small picture behind the glass is drawn at the floor's size: smoothly, so what was out of focus small is out of focus large.</summary>
+    static readonly SKSamplingOptions Smooth = new(SKFilterMode.Linear);
+
     /// <summary>How far out of focus the floor is behind a pane, how wide the band along a pane's rim is, how much larger the floor is drawn in it, and how far the light round the pointer reaches.</summary>
-    const float GlassBlur = 26, GlassRim = 13, GlassLens = 1.07f, GlassPointer = 260;
+    const float GlassBlur = 24, GlassRim = 13, GlassLens = 1.09f, GlassPointer = 260;
 
     /// <summary>A colour matrix that deepens colour by <paramref name="s"/> and lifts it by <paramref name="gain"/>: what is lit behind glass glows through it.</summary>
     static float[] Saturate(float s, float gain)

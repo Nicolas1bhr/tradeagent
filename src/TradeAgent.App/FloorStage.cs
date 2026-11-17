@@ -90,6 +90,17 @@ sealed class FloorStage : Control
     int _painted;
     bool _measured;
 
+    /// <summary>
+    /// The floor is behind a sheet: something is being read in front of it. It moves at half its pace and breathes slowly — it is
+    /// still alive, and it is not what the frames are for.
+    /// </summary>
+    public bool Behind { get; set; }
+
+    /// <summary>The least time between two frames: a sixtieth of a second, or a thirtieth behind a sheet.</summary>
+    TimeSpan Pace => Behind ? TimeSpan.FromMilliseconds(32) : TimeSpan.FromMilliseconds(15.5);
+
+    static readonly TimeSpan BehindBreath = TimeSpan.FromMilliseconds(100);
+
     static readonly TimeSpan Breath = TimeSpan.FromMilliseconds(40), CalmBreath = TimeSpan.FromMilliseconds(125), CalmStep = TimeSpan.FromMilliseconds(66);
 
     /// <summary>A frame that takes longer than this to paint is one this machine cannot afford sixty of.</summary>
@@ -167,12 +178,17 @@ sealed class FloorStage : Control
         Scene.Advance(dt);
 
         var breath = Scene.Motion == FloorMotion.Full ? Breath : CalmBreath;
-        var due = _dirty || (Scene.Busy && Scene.Motion != FloorMotion.Still)
-                  || (Scene.Breathing && Scene.Motion != FloorMotion.Still && Stopwatch.GetElapsedTime(_lastFrame, now) >= breath);
+        // NEVER FASTER THAN THE EYE NEEDS: a screen that refreshes 120 times a second asks for 120 frames, and the floor's motion is
+        // slow — sixty is all of it, and behind a sheet, where it is the background to something being read, thirty.
+        var since = Stopwatch.GetElapsedTime(_lastFrame, now);
+        var due = (_dirty && since >= Pace) || (Scene.Busy && Scene.Motion != FloorMotion.Still && since >= Pace)
+                  || (Scene.Breathing && Scene.Motion != FloorMotion.Still && since >= (Behind ? BehindBreath : breath));
         if (due) Draw(now);
 
         // Every frame while something is on its way; a slow frame while the floor only breathes; nothing while nothing moves. A calm
         // floor — a machine that draws without a graphics card — moves what is on its way at a pace it can afford, never every frame.
+        // A frame asked for sooner than the pace allows is drawn at the next beat, never dropped.
+        if (_dirty) { Pump(); return; }
         if (Scene.Motion == FloorMotion.Still) { _lastTick = 0; return; }
         if (Scene.Busy && Scene.Motion == FloorMotion.Full) Pump();
         else if (Scene.Busy) DispatcherTimer.RunOnce(Pump, CalmStep, DispatcherPriority.Background);
