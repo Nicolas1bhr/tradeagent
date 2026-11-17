@@ -20,17 +20,13 @@ public sealed partial class OrgStore
 
     /// <summary>
     /// EVERY UNIT UNDER <paramref name="head"/>'S OWN WHOSE HEAD IS VACANT: its parent's head is the one the rights matrix lets appoint it, so the
-    /// vacancy is that head's open work until it does. One exception, by the chart's own design: a TEAM with a member is led by the head above
-    /// it, who hired that member (a team's members are hired by its parent's head), so it is not unstaffed. A division or subdivision is never
-    /// led from above: a member hired into one without the head flag leaves its head vacant, and it stays open (review 1). A staff unit has no
-    /// head by design; the legacy divisions are headed. Rows only: the chart the app's own verbs wrote.
+    /// vacancy is that head's open work until it does — whatever the unit already holds. A member is never its unit's head: a team's members
+    /// are hired by the head above it, and led by the team's own head (docs/ORGANISATION.md § 2, "a head manager who decides"), so a member
+    /// hired without the head flag, or a head retired while its members stay, leaves the vacancy open (Mac review 1). A staff unit has no head
+    /// by design; the legacy divisions are headed. Rows only: the chart the app's own verbs wrote.
     /// </summary>
     public IReadOnlyList<OrgUnitRow> UnstaffedUnder(string head) => db.Read(_ =>
-    {
-        var staffed = Positions().Where(p => p.Status != OrgPositionStatus.Ended).Select(p => p.UnitId).ToHashSet(StringComparer.Ordinal);
-        return (IReadOnlyList<OrgUnitRow>)[.. UnitsUnder(head).Where(u => u.HeadPositionId is null && u.Kind != OrgUnitKind.Staff
-                                                                   && !(u.Kind == OrgUnitKind.Team && staffed.Contains(u.Id)))];
-    });
+        (IReadOnlyList<OrgUnitRow>)[.. UnitsUnder(head).Where(u => u.HeadPositionId is null && u.Kind != OrgUnitKind.Staff)]);
 
     /// <summary>
     /// EVERY ACTIVE HEAD OF A UNIT UNDER <paramref name="head"/>'S OWN THAT HOLDS NO OPEN MANDATE <paramref name="head"/> DECIDES — the same gap one

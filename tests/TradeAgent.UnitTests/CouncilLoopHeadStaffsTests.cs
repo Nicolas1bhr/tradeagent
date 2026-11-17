@@ -30,13 +30,13 @@ public partial class CouncilLoopTests
 
     /// <summary>
     /// (a) A UNIT UNDER YOURS THAT STANDS EMPTY IS YOUR OPEN WORK, until you appoint its head. A chief that chartered a division holds exactly one
-    /// <c>unit-unstaffed</c> naming it; after the hire with its head flag it holds none. The root, the legacy divisions (headed), a closed unit, a
-    /// headless team that has a member (led by the head above it), and an empty unit under ANOTHER head open none for the chief — the last is
-    /// that head's; a division with a member hired without the head flag stays open.
+    /// <c>unit-unstaffed</c> naming it; after the hire with its head flag it holds none. The root, the legacy divisions (headed), a closed unit and an
+    /// empty unit under ANOTHER head open none for the chief — the last is that head's. A unit holding a member and no head stays open, a team as much
+    /// as a division (a member is never its unit's head), and counts the positions it holds.
     ///
     /// <para>RED at base: "Assert.Single() Failure: The collection was empty" — no kind for a vacant head (RoleObjectives v4). Mutants, each watched red:
     /// the kind left out of a head's kinds; the parent filter dropped (the chief then owns the team under the other head too); closed units not
-    /// excluded.</para>
+    /// excluded; a team with a member exempted (the desktop's rule, Mac review 1); the positions never counted.</para>
     /// </summary>
     [Fact]
     public void A_unit_under_yours_with_no_head_is_your_open_work_until_you_appoint_one()
@@ -58,22 +58,25 @@ public partial class CouncilLoopTests
         Assert.Equal([unit], OfKind(db, chief, "unit-unstaffed").Select(o => o.Entity));
         Assert.Equal([team], OfKind(db, otherHead, "unit-unstaffed").Select(o => o.Entity));
 
-        // A TEAM WITH NO HEAD BUT A MEMBER IS STAFFED: a team's members are hired, and led, by the head above it.
+        // A TEAM WITH NO HEAD BUT A MEMBER IS STILL UNSTAFFED (Mac review 1): its members are hired by the head above it and led by its own head
+        // (docs/ORGANISATION.md § 2), so a member never fills the vacancy. The objective counts what the unit holds, which its line says.
         const string led = "unit-7ea4c0ffee02", member = "pos-7ea4c0ffee03";
         Chart(db, "INSERT INTO org_unit(id, parent_id, kind, head_position_id, status, created_at) VALUES($u,$p,'team',NULL,'active',$at)",
             ("$u", led), ("$p", other), ("$at", now.UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture)));
         Chart(db, "INSERT INTO org_position(id, unit_id, home_dir, status, created_at) VALUES($id,$u,$h,'dormant',$at)",
             ("$id", member), ("$u", led), ("$h", $"org/{member}"), ("$at", now.UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture)));
-        Assert.Equal([team], OfKind(db, otherHead, "unit-unstaffed").Select(o => o.Entity));
+        Assert.Equal(new[] { (team, 0), (led, 1) },
+            OfKind(db, otherHead, "unit-unstaffed").Select(o => (o.Entity, o.Unit!.Positions)).OrderBy(o => o.Entity, StringComparer.Ordinal));
 
         // A CLOSED UNIT OPENS NONE.
         Chart(db, "UPDATE org_unit SET status='closed', closed_at=$at WHERE id=$u", ("$u", team), ("$at", now.UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture)));
-        Assert.Empty(OfKind(db, otherHead, "unit-unstaffed"));
+        Assert.Equal([led], OfKind(db, otherHead, "unit-unstaffed").Select(o => o.Entity));
 
-        // A MEMBER HIRED WITHOUT THE HEAD FLAG DOES NOT STAFF A DIVISION (review 1): its head is still vacant, and it stays the chief's open work.
+        // A MEMBER HIRED WITHOUT THE HEAD FLAG DOES NOT STAFF A DIVISION (review 1): its head is still vacant, and it stays the chief's open work,
+        // now holding one position.
         var hand = org.Hire(new HireRequest(chief, "turn-member", unit, false, "a member, not its head", ["hire"], [], [ChartForecast]), now).Position.Id;
         Assert.Equal(unit, org.Position(hand)!.UnitId);
-        Assert.Equal([unit], OfKind(db, chief, "unit-unstaffed").Select(o => o.Entity));
+        Assert.Equal(new[] { (unit, 1) }, OfKind(db, chief, "unit-unstaffed").Select(o => (o.Entity, o.Unit!.Positions)));
 
         // THE HIRE WITH ITS HEAD FLAG CLOSES IT.
         org.Hire(new HireRequest(chief, "turn-hire", unit, true, "its first head", ["appoint"], [], [ChartForecast]), now);
@@ -158,5 +161,67 @@ public partial class CouncilLoopTests
         Assert.Contains("has no head", line, StringComparison.Ordinal);
         Assert.Contains($"`trade org hire {unit} <rationale> --forecasts JSON --head true`", line, StringComparison.Ordinal);
         Assert.DoesNotContain("unit-unstaffed:", sent, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// (h) WHAT IS WANTED IS SAID AS THE SEAT CALLS ITS VERBS, AND A UNIT WITH MEMBERS IS NEVER CALLED EMPTY (Mac review 2 and 3). The 72-hour run's
+    /// chief sat on a broker-only seat: its vacant division and its unmandated head are named with the door's own tool calls, as every other verb its
+    /// packet names; a seat whose reach carries no such verb is told so in words, and only a command-line seat is ever handed `trade …`. A vacant unit
+    /// that holds positions is said to hold them, never to stand empty.
+    ///
+    /// <para>Mutants watched red: the hire's op misnamed in the line (a broker seat is then never named `org_hire(…)`); every vacant unit said to stand
+    /// empty.</para>
+    /// </summary>
+    [Theory]
+    [InlineData(RuntimeClass.Broker)]
+    [InlineData(RuntimeClass.Cell)]
+    [InlineData(RuntimeClass.Harness)]
+    [InlineData(RuntimeClass.Cli)]
+    public void What_is_wanted_is_said_as_the_seat_calls_its_verbs_and_a_unit_with_members_is_never_called_empty(RuntimeClass runtime)
+    {
+        const string chief = "pos-c41ef0000001", empty = "unit-c41ef0000002", held = "unit-c41ef0000003", head = "pos-c41ef0000004",
+            under = "unit-c41ef0000005";
+        var reach = AgentReach.For(chief, runtime);
+        var text = new MissionSituation
+        {
+            Role = chief,
+            Mode = "PAPER",
+            Wanted =
+            [
+                new RoleObjective(RoleObjectives.UnitUnstaffed, empty, new RoleObjectiveUnit(empty, OrgUnitKind.Division, ChartDay)),
+                new RoleObjective(RoleObjectives.UnitUnstaffed, held, new RoleObjectiveUnit(held, OrgUnitKind.Team, ChartDay, Positions: 2)),
+                new RoleObjective(RoleObjectives.HeadUnmandated, head, new RoleObjectiveUnit(under, OrgUnitKind.Division, ChartDay))
+            ],
+            Spell = Canon.PacketVerbs(reach)
+        }.Text();
+        string Line(string id) =>
+            Assert.Single(text.Split('\n'), l => l.StartsWith("  - ", StringComparison.Ordinal) && l.Contains($"`{id}`", StringComparison.Ordinal));
+
+        Assert.Contains("has no head: it stands empty until you appoint one", Line(empty), StringComparison.Ordinal);
+        Assert.Contains("has no head until you appoint one: none of the 2 positions it holds is its head", Line(held), StringComparison.Ordinal);
+        Assert.DoesNotContain("empty", Line(held), StringComparison.Ordinal);
+
+        // EACH LINE NAMES ITS VERB AS THIS SEAT CALLS IT: its tool call where the reach carries the op, words where it does not.
+        foreach (var (line, op, none) in new[]
+                 {
+                     (Line(empty), Ops.OrgHire, "no tool of this seat appoints one"),
+                     (Line(held), Ops.OrgHire, "no tool of this seat appoints one"),
+                     (Line(head), Ops.MandateAssign, "no tool of this seat gives it one")
+                 })
+        {
+            if (runtime != RuntimeClass.Cli) Assert.DoesNotContain("`trade ", line, StringComparison.Ordinal);
+            if (reach.Verb(op) is { } verb)
+            {
+                Assert.Contains(runtime == RuntimeClass.Cli ? "`trade " : $"`{verb.Invocation}(", line, StringComparison.Ordinal);
+                Assert.DoesNotContain("no tool of this seat", line, StringComparison.Ordinal);
+            }
+            else Assert.Contains(none, line, StringComparison.Ordinal);
+        }
+
+        // THE RUN'S OWN SEAT CLASS CARRIES BOTH, so its lines can never fall back to words: the unit and the head flag, the holder, by name.
+        if (runtime != RuntimeClass.Broker) return;
+        Assert.Contains($"`org_hire(unit: {empty}, ", Line(empty), StringComparison.Ordinal);
+        Assert.Contains("head: true)`", Line(empty), StringComparison.Ordinal);
+        Assert.Contains($"`mandate_assign(holder: {head}, ", Line(head), StringComparison.Ordinal);
     }
 }

@@ -74,6 +74,6 @@ public partial class OrgChiefTests
         Assert.Equal(many + 2, cut.GetProperty("below_total").GetInt32());
         Assert.InRange(served, 1, many + 1);
         Assert.Contains($"{served} of the {many + 2} units", cut.GetProperty("below_cut").GetString(), StringComparison.Ordinal);
-        Assert.True(System.Text.Encoding.UTF8.GetByteCount(Json.Write(cut)) <= ResearchLedger.MaxReadBytes + 1024, "the answer outgrew its bound");
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(Json.Write(cut)) <= ResearchLedger.MaxReadBytes, "the answer outgrew its bound");
     }
 }

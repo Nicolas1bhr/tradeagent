@@ -11,10 +11,11 @@ public sealed record RoleObjective(string Kind, string Entity, RoleObjectiveUnit
 
 /// <summary>
 /// THE UNIT AN OBJECTIVE IS ABOUT, as the chart holds it (<c>U-head-staffs</c>): its id, its kind and the instant the fact behind the objective
-/// was recorded — the unit's charter for a vacant head, the head's hire for a head with no mandate. App rows only, so the packet can say what
-/// is wanted in the app's words; null on every kind that is not about a unit.
+/// was recorded — the unit's charter for a vacant head, the head's hire for a head with no mandate — and, for a vacant head, the positions
+/// the unit holds that have not ended, so its line never calls a unit with members empty (0 on the other kind). App rows only, so the packet
+/// can say what is wanted in the app's words; null on every kind that is not about a unit.
 /// </summary>
-public sealed record RoleObjectiveUnit(string Id, string Kind, DateTimeOffset Since);
+public sealed record RoleObjectiveUnit(string Id, string Kind, DateTimeOffset Since, int Positions = 0);
 
 /// <summary>
 /// WHAT EACH ROLE IS FOR, AS THE APP RECORDS IT — the desired world of <c>docs/VISION.md</c> § 6.7, as app data
@@ -205,7 +206,7 @@ public static class RoleObjectives
                 // from it — each read from the chart's rows, which only the app's own verbs write.
                 if (kinds.Contains(UnitUnstaffed))
                     foreach (var u in org.UnstaffedUnder(role))
-                        open.Add(new RoleObjective(UnitUnstaffed, u.Id, new RoleObjectiveUnit(u.Id, u.Kind, u.CreatedAt)));
+                        open.Add(new RoleObjective(UnitUnstaffed, u.Id, new RoleObjectiveUnit(u.Id, u.Kind, u.CreatedAt, org.PositionsNotEnded(u.Id))));
                 if (kinds.Contains(HeadUnmandated))
                     foreach (var h in org.UnmandatedUnder(role))
                         open.Add(new RoleObjective(HeadUnmandated, h.Head!, new RoleObjectiveUnit(h.Unit.Id, h.Unit.Kind, h.HeadSince!.Value)));

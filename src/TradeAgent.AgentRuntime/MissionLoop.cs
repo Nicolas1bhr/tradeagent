@@ -1649,7 +1649,12 @@ public sealed record MissionSituation
     static string Want(RoleObjective o, PacketVerb? spell = null) => o.Kind switch
     {
         RoleObjectives.UnitUnstaffed when o.Unit is { } u =>
-            $"the {u.Kind} `{u.Id}` under yours, chartered {Stamp(u.Since)}, has no head: it stands empty until you appoint one"
+            $"the {u.Kind} `{u.Id}` under yours, chartered {Stamp(u.Since)}, " + u.Positions switch
+            {
+                0 => "has no head: it stands empty until you appoint one",
+                1 => "has no head until you appoint one: the 1 position it holds is not its head",
+                var n => $"has no head until you appoint one: none of the {n.ToString(CultureInfo.InvariantCulture)} positions it holds is its head"
+            }
             + (MissionLoop.Verb(spell, Ops.OrgHire, $"{u.Id} <rationale> --forecasts JSON --head true", $"trade org hire {u.Id} <rationale> --forecasts JSON --head true") is { } hire
                 ? $" — `{hire}`" : " — no tool of this seat appoints one"),
         RoleObjectives.HeadUnmandated when o.Unit is { } u =>
