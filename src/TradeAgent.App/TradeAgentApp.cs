@@ -11,7 +11,8 @@ public sealed class TradeAgentApp : Application
 {
     AppHost? _host;
 
-    static int _interRegistered;
+    /// <summary>The font manager that carries the app's type: see <see cref="Initialize"/>.</summary>
+    static Avalonia.Media.FontManager? _typed;
 
     /// <summary>The SIGTERM registration, held for the app's life: a registration nobody holds can be collected.</summary>
     PosixSignalRegistration? _stopSignal;
@@ -25,10 +26,12 @@ public sealed class TradeAgentApp : Application
     public override void Initialize()
     {
         // THE APP'S TYPE, registered here and not on the builder, so every way this application is started carries it: the window's
-        // own start and the headless one the render rows use. Once per process: the font manager is the process's, and a second
-        // application object (a test host builds several) must not add the collection twice.
-        if (Interlocked.Exchange(ref _interRegistered, 1) == 0)
-            Avalonia.Media.FontManager.Current.AddFontCollection(new Avalonia.Fonts.Inter.InterFontCollection());
+        // own start and the headless one the render rows use. ONCE PER FONT MANAGER, not once per process: the test host builds a new
+        // application for every render and each has a font manager of its own, so a registration counted by the process reached the
+        // first render alone — every later one drew the pages in whatever the machine falls back to, and measured that.
+        var fonts = Avalonia.Media.FontManager.Current;
+        if (!ReferenceEquals(Interlocked.Exchange(ref _typed, fonts), fonts))
+            fonts.AddFontCollection(new Avalonia.Fonts.Inter.InterFontCollection());
 
         // FLUENT'S OWN ACCENT IS THE WINDOW'S LIGHT, not a blue: what Fluent paints by itself — a ticked box, a chosen row of a list,
         // a focus ring — is then the same near-white as every primary press, and indigo is left meaning the AI alone (Theme).

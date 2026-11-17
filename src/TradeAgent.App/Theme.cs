@@ -116,9 +116,13 @@ static partial class Theme
     /// <summary>
     /// Every number the user might compare to another number is set in this. Proportional digits
     /// make a column of prices jitter, and a jittering price column is how you misread a fill.
+    /// <para><b>A family is named for every platform</b>, because the generic word at the end is not one: a font manager matches a
+    /// family by its own name, "monospace" is nobody's, and a list with no installed name in it falls to the machine's default face —
+    /// which on Linux is proportional. The last three are what a Linux desktop carries; the first of them comes with the app's own
+    /// Linux install (<c>packaging/linux/install.sh</c>).</para>
     /// </summary>
     public static readonly FontFamily Mono =
-        new("Cascadia Mono, Consolas, JetBrains Mono, SF Mono, Menlo, monospace");
+        new("Cascadia Mono, Consolas, JetBrains Mono, SF Mono, Menlo, DejaVu Sans Mono, Liberation Mono, Noto Sans Mono, monospace");
 
     /// <summary>The window's one large line (<see cref="Ui.Hero"/>), its line box and how tightly it is set.</summary>
     public const double Hero = 52, HeroLine = 58, HeroTracking = -1.9;
