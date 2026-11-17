@@ -84,7 +84,7 @@ public class GlassRenderTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void A_pane_of_glass_changes_the_frame_where_it_lies_and_leaves_the_floor_beside_it_as_it_was()
+    public async Task A_pane_of_glass_changes_the_frame_where_it_lies_and_leaves_the_floor_beside_it_as_it_was()
     {
         using var db = OwnerPagesSeed.Working(Path.Combine(UiTestHome.Home, $"glass-{Guid.NewGuid():n}.db"));
         var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
@@ -106,11 +106,11 @@ public class GlassRenderTests(ITestOutputHelper output)
             var beside = SKRectI.Create(0, 0, (int)Sheet.X - 60, Height);
             Assert.Equal(0, Differing(bare, glazed, beside));
         }
-        finally { host.Gateway.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+        finally { await host.Gateway.DisposeAsync(); }
     }
 
     [Fact]
-    public void Without_a_graphics_card_a_pane_does_not_draw_the_floor_a_second_time_and_is_still_a_pane()
+    public async Task Without_a_graphics_card_a_pane_does_not_draw_the_floor_a_second_time_and_is_still_a_pane()
     {
         using var db = OwnerPagesSeed.Working(Path.Combine(UiTestHome.Home, $"glass-calm-{Guid.NewGuid():n}.db"));
         var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
@@ -145,7 +145,7 @@ public class GlassRenderTests(ITestOutputHelper output)
             var body = Mean(sheet, SKRectI.Create((int)Sheet.X + 60, (int)Sheet.Y + 300, 500, 60));
             Assert.True(rim > body + 12, $"a calm pane has no rim: {rim:0} against {body:0}");
         }
-        finally { host.Gateway.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+        finally { await host.Gateway.DisposeAsync(); }
     }
 
     /// <summary>
@@ -155,7 +155,7 @@ public class GlassRenderTests(ITestOutputHelper output)
     /// figures are written where a reader of the run finds them.
     /// </summary>
     [Fact]
-    public void What_a_frame_of_glass_costs_on_the_processor_alone_is_measured_and_the_calm_glass_is_nearly_free()
+    public async Task What_a_frame_of_glass_costs_on_the_processor_alone_is_measured_and_the_calm_glass_is_nearly_free()
     {
         using var db = OwnerPagesSeed.Working(Path.Combine(UiTestHome.Home, $"glass-cost-{Guid.NewGuid():n}.db"));
         var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
@@ -177,6 +177,6 @@ public class GlassRenderTests(ITestOutputHelper output)
                              + $"calm floor {floorCalm:0.0} ms, calm floor under three panes {glassCalm:0.0} ms");
             Assert.True(glassCalm < floorCalm * 1.6 + 2, $"calm glass is not nearly free: {glassCalm:0.0} ms against {floorCalm:0.0} ms for the floor alone");
         }
-        finally { host.Gateway.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+        finally { await host.Gateway.DisposeAsync(); }
     }
 }
