@@ -93,14 +93,8 @@ sealed class BoardPage
         _unreadableCard.IsVisible = false;
 
         // WHAT IS IN FORCE, SET AS THE PAGE'S ONE LARGE THING: the version, then who decided it and since when, quiet beside it.
-        _version.FontSize = Theme.Display;
-        _version.LineHeight = Theme.DisplayLine;
-        _version.FontWeight = Avalonia.Media.FontWeight.Light;
-        _version.FontFamily = Theme.SansDisplay;
-        _version.LetterSpacing = Theme.DisplayTracking;
-        _version.FontFeatures = Theme.Tabular;
         var inForce = Ui.Col(Theme.S4,
-            Ui.Col(2, Ui.Eyebrow("The policy in force"), _version),
+            Ui.Col(Theme.S2, Ui.Eyebrow("The policy in force"), Ui.Figure(_version, "Version")),
             Ui.Fact("Decided by", _decider),
             Ui.Figures(Ui.Fact("Since", _since), Ui.Fact("Its fingerprint", _hash)),
             Ui.With(Ui.Muted("These are the limits and allowances TradeAgent enforces. The security board decides them; until a board seat is "
