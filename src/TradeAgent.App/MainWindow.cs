@@ -715,8 +715,9 @@ public sealed class MainWindow : Window
             if (key == page) icon.Stroke = Tokens.Accent;
             else icon[!Shape.StrokeProperty] = button[!TemplatedControl.ForegroundProperty];
         }
-        // The floor runs edge to edge; a page of words keeps its margins.
-        _pageFrame.Padding = page == Page.Floor ? default : new Thickness(Tokens.S6, Tokens.S6, Tokens.S6, 0);
+        // The floor runs edge to edge; a page of words keeps its margins on every side, the bottom's included — the Chat page's box
+        // and its hint line are the last thing on their page, and must not sit against the window's edge.
+        _pageFrame.Padding = page == Page.Floor ? default : new Thickness(Tokens.S6);
         foreach (var (key, control) in _pages) control.IsVisible = key == page;
         _floor?.Shown(page == Page.Floor);
         if (was != page || !_everShown) ComeIn(_pages[page]);
