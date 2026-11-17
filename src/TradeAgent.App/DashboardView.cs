@@ -107,7 +107,7 @@ sealed class DashboardPage
     // THE DESK (U-ui-world): the five facts set as what they are — the mode and whether the AI may trade large, the two counts as
     // figures, the platform and the account as the line they stand on — each a text block written in place on the tick.
     readonly TextBlock _mode = Ui.ReadoutLarge();
-    readonly TextBlock _tradingWord = Ui.StateLarge();
+    readonly TextBlock _tradingWord = Ui.ReadoutLarge();
     readonly Avalonia.Controls.Shapes.Ellipse _tradingDot = Ui.StateDot();
     /// <summary>The "AI trading" fact in its own words, under the word set large, whenever it says more than that word.</summary>
     readonly TextBlock _tradingSentence = Ui.With(Ui.Body(""), t => { t.FontSize = Theme.Small; t.IsVisible = false; });
@@ -218,18 +218,19 @@ sealed class DashboardPage
         counts[Grid.ColumnProperty] = 1;
         counts.Margin = new Thickness(Theme.S6, 0, 0, 0);
         counts.VerticalAlignment = VerticalAlignment.Bottom;
+        _tradingDot.Margin = new Thickness(0, 4, 0, 0);
+        var states = Ui.Spread(Theme.FigureGap, Theme.S2,
+            Ui.Readout("Trading mode", _mode),
+            Ui.Readout("AI trading", Ui.Row(Theme.S3, _tradingDot, _tradingWord)));
         var modeLine = new Grid
         {
             ColumnDefinitions = new ColumnDefinitions("*,Auto"),
-            Children = { Ui.Readout("Trading mode", _mode), counts }
+            Children = { states, counts }
         };
-        var trading = Ui.Readout("AI trading", Ui.Col(Theme.S1,
-            Ui.Row(Theme.S3, _tradingDot, _tradingWord),
-            _tradingSentence));
-        var where = Ui.Wrap(Theme.FigureGap,
+        var where = Ui.Spread(Theme.FigureGap, Theme.S2,
             Ui.Readout("Platform", _platform),
             Ui.Readout("Account", _account));
-        var facts = Ui.Col(Theme.S5, modeLine, trading, where);
+        var facts = Ui.Col(Theme.S4, modeLine, _tradingSentence, Ui.With(where, w => w.Margin = new Thickness(0, Theme.S2, 0, 0)));
 
         _agentButton = Ui.Primary("Start the AI", async () => await _toggleAgent());
 

@@ -17,6 +17,18 @@ static partial class Ui
     public static Control Readout(string name, Control value) =>
         Col(Theme.S1, With(Micro(name), t => t.Foreground = Theme.TextMuted), value);
 
+    /// <summary>Readouts side by side while they fit, wrapping under each other when they do not: this far apart across, this far down.</summary>
+    public static WrapPanel Spread(double across, double down, params Control[] kids)
+    {
+        var p = new WrapPanel();
+        foreach (var k in kids)
+        {
+            k.Margin = new Thickness(0, 0, across, down);
+            p.Children.Add(k);
+        }
+        return p;
+    }
+
     /// <summary>A value set at the size of a figure, light: the one thing a readout is there to say.</summary>
     public static TextBlock ReadoutLarge(string text = "—") => new()
     {
