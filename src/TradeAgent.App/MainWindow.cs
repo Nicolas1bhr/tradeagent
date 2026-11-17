@@ -254,7 +254,7 @@ public sealed class MainWindow : Window
             Padding = new Thickness(Tokens.S8, Tokens.S10),
             Child = new Border
             {
-                MaxWidth = Tokens.SetupMaxWidth, HorizontalAlignment = HorizontalAlignment.Stretch,
+                MaxWidth = Tokens.SetupMaxWidth, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Top,
                 Background = Tokens.Solid, BorderBrush = Tokens.PaneRim, BorderThickness = new Thickness(1),
                 CornerRadius = Tokens.RadiusSheet, Padding = new Thickness(Tokens.S10, Tokens.S10, Tokens.S10, Tokens.S8),
                 Child = slot
@@ -268,7 +268,7 @@ public sealed class MainWindow : Window
     /// </summary>
     internal static Control OlderHomeScreen(string message, string? problem, string confirmLabel, Func<Task> startFresh) =>
         Ui.Col(Tokens.S4,
-            Ui.H1("This TradeAgent does not open your older folder"),
+            Ui.Title("This TradeAgent does not open your older folder"),
             Ui.Body(message),
             Ui.With(Ui.Body(problem ?? ""), t => { t.Foreground = Tokens.Caution; t.IsVisible = problem is not null; }),
             Ui.Confirm("Start fresh", confirmLabel, startFresh));
@@ -292,7 +292,7 @@ public sealed class MainWindow : Window
     /// <summary>The no-ATAS screen, its press in the column for the same reason as <see cref="OlderHomeScreen"/>'s.</summary>
     internal static Control AtasNotInThisBuildScreen(string message, bool setupFinished, Func<Task> runOnPaper) =>
         Ui.Col(Tokens.S4,
-            Ui.H1("This TradeAgent has no ATAS"),
+            Ui.Title("This TradeAgent has no ATAS"),
             Ui.Body(message),
             Ui.Body(setupFinished
                 ? "You can run this TradeAgent on its own paper venue instead: real prices, simulated fills, no money. Your ATAS choice "
@@ -305,7 +305,7 @@ public sealed class MainWindow : Window
     void ShowFatal(string message)
     {
         _setupSlot.Content = Ui.Col(Tokens.S4,
-            Ui.H1("TradeAgent cannot start"),
+            Ui.Title("TradeAgent cannot start"),
             Ui.Body(message),
             Ui.Muted("If this keeps happening, open TradeAgent again and use Create support package on the Checks page."));
         _setupSurface.IsVisible = true;

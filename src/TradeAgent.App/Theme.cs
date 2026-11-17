@@ -91,6 +91,8 @@ static partial class Theme
     /// "the AI is here" the same colour.
     /// </summary>
     public static readonly IBrush Primary = B("#F1F3F8");
+    /// <summary>The same light, as the colour Fluent's own templates are given for their accent (see <see cref="TradeAgentApp.Initialize"/>).</summary>
+    public static readonly Color FluentAccent = Color.Parse("#E4E7EE");
     public static readonly IBrush PrimaryHover = B("#FFFFFF");
     public static readonly IBrush PrimaryPress = B("#D5D9E3");
 

@@ -30,7 +30,14 @@ public sealed class TradeAgentApp : Application
         if (Interlocked.Exchange(ref _interRegistered, 1) == 0)
             Avalonia.Media.FontManager.Current.AddFontCollection(new Avalonia.Fonts.Inter.InterFontCollection());
 
-        Styles.Add(new FluentTheme());
+        // FLUENT'S OWN ACCENT IS THE WINDOW'S LIGHT, not a blue: what Fluent paints by itself — a ticked box, a chosen row of a list,
+        // a focus ring — is then the same near-white as every primary press, and indigo is left meaning the AI alone (Theme).
+        var fluent = new FluentTheme();
+        fluent.Palettes[ThemeVariant.Dark] = new ColorPaletteResources { Accent = Theme.FluentAccent };
+        Styles.Add(fluent);
+        // A tick on that light is the window's dark, in every state Fluent paints it: a white tick on a near-white box is no tick.
+        foreach (var state in new[] { "Checked", "CheckedPointerOver", "CheckedPressed" })
+            Resources["CheckBoxCheckGlyphForeground" + state] = Theme.TextOnAccent;
         Styles.Add(Theme.Build());
         RequestedThemeVariant = ThemeVariant.Dark;
     }

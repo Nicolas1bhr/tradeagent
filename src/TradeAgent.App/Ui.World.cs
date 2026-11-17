@@ -15,6 +15,10 @@ namespace TradeAgent.App;
 /// </summary>
 static partial class Ui
 {
+    /// <summary>The name at the head of a pane — a page's, a setup screen's: large and light.</summary>
+    public static TextBlock Title(string text) =>
+        With(Hero(text), t => { t.FontSize = Theme.Title; t.LineHeight = Theme.TitleLine; t.LetterSpacing = Theme.TitleTracking; });
+
     /// <summary>A figure set large and light over what it counts. The caller keeps the figure and rewrites its text in place.</summary>
     public static Control Figure(TextBlock figure, string counts)
     {
