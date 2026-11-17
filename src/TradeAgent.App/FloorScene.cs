@@ -777,7 +777,7 @@ sealed class FloorScene
 
     /// <summary>How near the whole floor was last seen from, and how many times nearer than that a look at one part of it may stand.</summary>
     float _whole;
-    const float NearestLook = 2.1f;
+    const float NearestLook = 1.55f;
 
     /// <summary>
     /// Where the camera is wanted, and the middle of what it frames at a zoom of one: what it looks at — the whole floor, every slab's
@@ -832,8 +832,8 @@ sealed class FloorScene
 
         var zoom = Math.Min((clear.R - clear.L) / Math.Max(0.1f, maxX - minX), (clear.B - clear.T) / Math.Max(0.1f, maxY - minY));
         zoom = Math.Clamp(zoom, 12, 120);
-        // GOING TO A PART OF THE FLOOR IS A STEP TOWARD IT, NOT A FACE PRESSED AGAINST IT: never nearer than a little over twice as
-        // near as the whole floor is seen from, so what stands round the part is still seen standing round it.
+        // GOING TO A PART OF THE FLOOR IS A STEP TOWARD IT, NOT A FACE PRESSED AGAINST IT: never nearer than half as near again
+        // as the whole floor is seen from, so what stands round the part is still seen standing round it.
         if (_look is not null && _whole > 0) zoom = Math.Min(zoom, _whole * NearestLook);
         else if (_look is null) _whole = zoom;
         var centre = new Vector2((minX + maxX) / 2, (minY + maxY) / 2);

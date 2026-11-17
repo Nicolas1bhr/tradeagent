@@ -416,7 +416,9 @@ sealed class OwnerPage
             // THE FOREGROUND IS PART OF THE REPAINT, NOT JUST THE FILL: arming swaps to the "danger" class, whose red foreground on this
             // red fill read as a blank red block on the running app.
             var red = armed || !stopped();
-            btn.Background = red ? Theme.DangerSoft : Theme.PositiveSoft;
+            // Armed — the one moment it must not be passed over — it takes the soft red fill; at rest it is glass like the two
+            // presses beside it, told from them by its red words and edge alone.
+            btn.Background = armed ? Theme.DangerSoft : Theme.BgHover;
             btn.BorderBrush = red ? Theme.DangerLine : Theme.PositiveLine;
             btn.Foreground = red ? Theme.DangerText : Theme.Positive;
         });

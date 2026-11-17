@@ -445,7 +445,9 @@ sealed partial class FloorPage
     {
         // On a narrow window, or under a sheet, the stage keeps the room: the sentences go, the floor stays.
         _feedColumn.IsVisible = _reserveRight <= 0 && Root.Bounds.Width >= 860;
-        _foot.IsVisible = Root.Bounds.Height >= 520;
+        // The day's figures belong to the whole floor. Where the camera has gone to one part of it beside a sheet, they are put away:
+        // the floor's share of the window is that part's, and the figures are on the pages that own them.
+        _foot.IsVisible = Root.Bounds.Height >= 520 && !(_reserveRight > 0 && _near);
         // The floor's own words keep to the floor's share of the window. A replay is the floor's alone: beside a sheet — a page of
         // the present — its presses are put away with it.
         var share = Math.Max(240, Root.Bounds.Width - _reserveRight - 2 * Theme.S8);
@@ -508,8 +510,13 @@ sealed partial class FloorPage
             };
         }
         scene.Look(look);
+        _near = look is not null;
+        Fit();
         _stage.Wake();
     }
+
+    /// <summary>The camera is on one part of the floor, not the whole of it.</summary>
+    bool _near;
 
     /// <summary>Whatever the floor was replaying, it shows the present again.</summary>
     public void Present() => StopReplay();
@@ -1084,12 +1091,19 @@ sealed partial class FloorPage
             cells[cell.Id] = new Rect(minX, minY, maxX - minX, maxY - minY).Inflate(9);
         }
 
-        var stage = new Rect(_stage.Bounds.Size).Deflate(8);
+        // CAPTIONS KEEP TO THE FLOOR'S OWN SHARE OF THE WINDOW: not under a sheet, not under the dock. A working cell the camera has
+        // left under the glass keeps its light, and its words wait until it is in the clear again.
+        var stage = new Rect(8, 8, Math.Max(40, _stage.Bounds.Width - _reserveRight - 16), Math.Max(40, _stage.Bounds.Height - _reserveBottom - 16));
         var placed = new List<Rect>();
 
         foreach (var id in wanted)
         {
             if (!cells.TryGetValue(id, out var box)) continue;
+            if (!stage.Contains(box.Center))
+            {
+                if (_captionOf.TryGetValue(id, out var away)) away.Panel.IsVisible = false;
+                continue;
+            }
             if (!_captionOf.TryGetValue(id, out var caption))
             {
                 var name = new TextBlock { FontSize = Theme.Small, FontWeight = FontWeight.SemiBold, Foreground = Theme.Text };

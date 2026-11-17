@@ -350,18 +350,16 @@ static partial class Theme
         // press carries out, and they are read — a block of saturated red is looked away from.
         AddButtonVariant(styles, "danger", DangerSoft, DangerGlass, DangerGlassPress, DangerText, DangerLine, FontWeight.SemiBold);
 
-        // The emergency control on the owner's page: the same red light, larger. (How it is painted while it means RESUME is the
-        // page's own, by local brushes — see OwnerPage.)
+        // The emergency control on the owner's page: the size of the presses beside it, told from them by red words and a red edge.
+        // (How it is painted armed, and while it means RESUME, is the page's own, by local brushes — see OwnerPage.)
         styles.Add(new Style(x => x.OfType<Button>().Class("emergency"))
         {
             Setters =
             {
-                S(TemplatedControl.FontSizeProperty, H2),
                 S(TemplatedControl.FontWeightProperty, FontWeight.SemiBold),
-                S(TemplatedControl.PaddingProperty, new Thickness(S5, 12)),
                 S(TemplatedControl.CornerRadiusProperty, RadiusButton),
                 S(TemplatedControl.ForegroundProperty, DangerText),
-                S(TemplatedControl.BackgroundProperty, DangerSoft),
+                S(TemplatedControl.BackgroundProperty, BgHover),
                 S(TemplatedControl.BorderBrushProperty, DangerLine),
                 S(TemplatedControl.BorderThicknessProperty, new Thickness(1))
             }
