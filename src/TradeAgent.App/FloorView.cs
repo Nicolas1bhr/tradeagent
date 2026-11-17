@@ -380,7 +380,14 @@ sealed partial class FloorPage
             VerticalAlignment = VerticalAlignment.Top, Width = 640, Height = 420
         };
 
-        Root = new Grid { Children = { _stage, _captions, titleScrim, _feedColumn, title, _foot }, ClipToBounds = true };
+        // And under the day's figures at its foot, the same.
+        var footScrim = new Border
+        {
+            Background = Theme.FootScrim, IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Bottom, Width = 720, Height = 300
+        };
+
+        Root = new Grid { Children = { _stage, _captions, titleScrim, footScrim, _feedColumn, title, _foot }, ClipToBounds = true };
 
         // THE FLOOR STANDS BETWEEN THE TITLE AND THE FIGURES, and runs a little way under the sentences on the right, where they are darkest
         // — or, while the window has a sheet over its right side, in what the sheet leaves.

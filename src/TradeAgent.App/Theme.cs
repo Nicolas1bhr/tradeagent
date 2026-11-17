@@ -262,6 +262,14 @@ static partial class Theme
         GradientStops = { new GradientStop(Color.Parse("#F00B0D12"), 0), new GradientStop(Color.Parse("#C00B0D12"), 0.5), new GradientStop(Color.Parse("#000B0D12"), 1) }
     };
 
+    /// <summary>The same dark under the day's figures at the window's bottom left.</summary>
+    public static readonly IBrush FootScrim = new RadialGradientBrush
+    {
+        Center = new RelativePoint(0, 1, RelativeUnit.Relative), GradientOrigin = new RelativePoint(0, 1, RelativeUnit.Relative),
+        RadiusX = new RelativeScalar(1, RelativeUnit.Relative), RadiusY = new RelativeScalar(1, RelativeUnit.Relative),
+        GradientStops = { new GradientStop(Color.Parse("#F00B0D12"), 0), new GradientStop(Color.Parse("#C00B0D12"), 0.5), new GradientStop(Color.Parse("#000B0D12"), 1) }
+    };
+
     // ---- motion -----------------------------------------------------------------------------
     /// <summary>How long a hover takes to arrive, and a page to come in. Short enough that nothing is ever waited for.</summary>
     public static readonly TimeSpan Quick = TimeSpan.FromMilliseconds(110), PageIn = TimeSpan.FromMilliseconds(220);
