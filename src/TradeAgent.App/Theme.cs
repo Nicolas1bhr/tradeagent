@@ -618,6 +618,9 @@ static partial class Theme
             }
         });
 
+        // The owner's pages' own styles (the choice lists as wells of the pane): theirs to define, the theme's to carry.
+        AddOwnerStyles(styles);
+
         return styles;
     }
 
