@@ -38,6 +38,36 @@ sealed class BoardPage
     readonly TextBlock _hash = Ui.Mono("");
     readonly TextBlock _unnamed = Ui.With(Ui.Micro(""), t => t.Foreground = Theme.Caution);
     readonly Border _unreadableCard;
+
+    /// <summary>
+    /// ONE DECISION, ITS NAME AND ITS VALUE PAIRED (<c>U-ui-world</c>): the name in a quiet column, the value beside it — set as a figure
+    /// where the policy holds a number, at the reading size where it holds words — and since when, quiet, under the value.
+    /// </summary>
+    static Control Decided(string name, TextBlock value, TextBlock source)
+    {
+        var words = new TextBlock
+        {
+            Text = name, FontSize = Theme.Small, Foreground = Theme.TextMuted, TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            Margin = new Avalonia.Thickness(0, 4, Theme.S4, 0)
+        };
+        var said = Ui.Col(2, value, source);
+        said[Grid.ColumnProperty] = 1;
+        return new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions($"{Theme.ValueNameWidth.ToString(System.Globalization.CultureInfo.InvariantCulture)},*"),
+            Children = { words, said }
+        };
+    }
+
+    /// <summary>A value as a figure when the policy holds a number, and in words otherwise: the size follows what the field IS, never its sentence.</summary>
+    static void SetAs(TextBlock value, string held)
+    {
+        var figure = decimal.TryParse(held, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out _);
+        value.FontSize = figure ? Theme.ValueFigure : Theme.ValueWords;
+        value.LineHeight = figure ? Theme.ValueFigureLine : 21;
+        value.FontWeight = figure ? Avalonia.Media.FontWeight.Light : Avalonia.Media.FontWeight.Normal;
+        value.FontFamily = figure ? Theme.SansDisplay : Theme.Sans;
+    }
     readonly TextBlock _unreadable = Ui.Body("", Theme.Caution);
 
     readonly StackPanel _seats = new() { Spacing = Theme.S2 };
@@ -58,73 +88,72 @@ sealed class BoardPage
     {
         _board = board;
 
-        _unreadableCard = new Border
-        {
-            Background = Theme.CautionSoft,
-            BorderBrush = Theme.Caution,
-            BorderThickness = new Avalonia.Thickness(1),
-            CornerRadius = Theme.Radius,
-            Padding = new Avalonia.Thickness(Theme.S5),
-            IsVisible = false,
-            Child = _unreadable
-        };
+        // THE ONE NOTICE THE PAGE MAY KEEP (U-ui-world): the policy could not be read, so nothing below is shown as decided.
+        _unreadableCard = Ui.Notice(Theme.Caution, _unreadable);
+        _unreadableCard.IsVisible = false;
 
-        var inForce = Ui.Section("The policy in force", Ui.Col(Theme.S2,
-            Ui.KeyValueLive("Version", _version),
-            Ui.KeyValueLive("Decided by", _decider),
-            Ui.KeyValueLive("Since", _since),
-            Ui.KeyValueLive("Its fingerprint", _hash),
-            Ui.Divider(),
-            Ui.Muted("These are the limits and allowances TradeAgent enforces. The security board decides them; until a board seat is "
+        // WHAT IS IN FORCE, SET AS THE PAGE'S ONE LARGE THING: the version, then who decided it and since when, quiet beside it.
+        _version.FontSize = Theme.Display;
+        _version.LineHeight = Theme.DisplayLine;
+        _version.FontWeight = Avalonia.Media.FontWeight.Light;
+        _version.FontFamily = Theme.SansDisplay;
+        _version.LetterSpacing = Theme.DisplayTracking;
+        _version.FontFeatures = Theme.Tabular;
+        var inForce = Ui.Col(Theme.S4,
+            Ui.Col(2, Ui.Eyebrow("The policy in force"), _version),
+            Ui.Fact("Decided by", _decider),
+            Ui.Figures(Ui.Fact("Since", _since), Ui.Fact("Its fingerprint", _hash)),
+            Ui.With(Ui.Muted("These are the limits and allowances TradeAgent enforces. The security board decides them; until a board seat is "
                      + "active, the app's founding policy does. Nothing on this page changes them, and the AI cannot either."),
+                t => t.FontSize = Theme.Small),
             // ADVISORY WHERE IT IS ADVISORY (R25 D13): the plan's day and shares are this page's own figures, so its words go with them.
-            Ui.Muted(Labels.PlanReservationRule)));
+            Ui.With(Ui.Muted(Labels.PlanReservationRule), t => t.FontSize = Theme.Small));
 
-        var left = Ui.Col(Theme.S6, _unreadableCard, inForce);
+        var page = Ui.Col(Theme.S8, _unreadableCard, inForce);
         foreach (var group in Labels.BoardFields.Select(f => f.Group).Distinct())
         {
-            var rows = Ui.Col(0);
+            var rows = Ui.Col(Theme.S4);
             foreach (var words in Labels.BoardFields.Where(f => f.Group == group))
             {
-                var value = Ui.With(Ui.Body(""), t => { t.FontWeight = Avalonia.Media.FontWeight.SemiBold; t.TextWrapping = Avalonia.Media.TextWrapping.Wrap; });
+                var value = Ui.With(Ui.Body(""), t =>
+                {
+                    t.TextWrapping = Avalonia.Media.TextWrapping.Wrap;
+                    t.FontFeatures = Theme.Tabular;
+                });
                 var source = Ui.Micro("");
-                var row = Ui.FieldRow(words.Label, value, source);
+                var row = Decided(words.Label, value, source);
                 row.IsVisible = false;
                 _rows[words.Path] = new Row(row, value, source);
                 rows.Children.Add(row);
             }
             var section = Ui.Section(group, rows);
             _groups[group] = section;
-            left.Children.Add(section);
+            page.Children.Add(section);
         }
         _unnamed.IsVisible = false;
-        left.Children.Add(_unnamed);
+        page.Children.Add(_unnamed);
+
+        // THE SEATS AFTER WHAT THEY DECIDE: the dormant line under them says "nothing above has been decided by the board".
+        page.Children.Add(Ui.Section("The board's seats", Ui.Col(Theme.S4, _seats, _seatsDormant)));
 
         _showHistory = Ui.Ghost(Labels.ShowBoardHistory, ToggleHistory);
         _showHistory.HorizontalAlignment = HorizontalAlignment.Left;
-        left.Children.Add(Ui.Section("Every version", Ui.Col(Theme.S3,
+        page.Children.Add(Ui.Section("Every version", Ui.Col(Theme.S3,
             Ui.Muted("Each version of the policy, oldest first: who decided it, on what basis, their reasons as they gave them, the "
                      + "evidence class of anything it allocated, and the audit line's score."),
             _showHistory,
             _history)));
 
         Acts = new LiveList<BoardActRecord>(ActCards, Ui.Muted(Labels.BoardActsNone), a => a.Act.Id, ActCard);
-        left.Children.Add(Ui.Section(Labels.BoardActs, Ui.Col(Theme.S3, _actsUnreadable, ActCards)));
+        page.Children.Add(Ui.Section(Labels.BoardActs, Ui.Col(Theme.S3, _actsUnreadable, ActCards)));
         // VENTURES (R24 § 4.6): a venture is a mandate the organisation proposes and the board approves — none exists in this build
         // (U-ventures-a), so the section says so in words rather than drawing an empty frame.
-        left.Children.Add(Ui.Section(Labels.Ventures, Ui.Muted(Labels.VenturesNone)));
-
-        var seats = Ui.Section("The board's seats", Ui.Col(Theme.S3, _seats, Ui.Divider(), _seatsDormant));
-        seats.Margin = new Avalonia.Thickness(Theme.S5, 0, 0, 0);
-
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
-        grid.Children.Add(Pages.Column(0, left));
-        grid.Children.Add(Pages.Column(1, seats));
+        page.Children.Add(Ui.Section(Labels.Ventures, Ui.Muted(Labels.VenturesNone)));
 
         Root = Pages.Scroll(Ui.Col(0,
             Pages.Header(Labels.BoardPage,
                 "The security board's decisions in force — every limit and allowance TradeAgent enforces, who decided it and since when."),
-            grid));
+            page));
 
         Update();
     }
@@ -209,6 +238,7 @@ sealed class BoardPage
             if (!_rows.TryGetValue(field.Name, out var row)) continue;
             var words = Labels.BoardField(field.Name)!;
             row.Value.Text = ValueWords(words, field.Value);
+            SetAs(row.Value, field.Value);
             var setBy = history.FirstOrDefault(v => v.Version == field.SetByVersion);
             row.Source.Text = Labels.BoardFieldSource(founding.Contains(field.SetByVersion), field.SetByVersion,
                 setBy is null ? null : Since(setBy.WrittenAt))
@@ -285,7 +315,8 @@ sealed class BoardPage
                                resolved is null ? null : OrgText.When(resolved.At), f.Scored, f.UnscoredWhy);
                 })));
         }
-        return (Ui.Col(Theme.S1, title, status, intent, meaning, events, rationales, evidence, forecasts, score), Fill);
+        intent.Foreground = Theme.TextMuted;
+        return (Ui.Item(Ui.Col(Theme.S1, title, status, intent, meaning, events, rationales, evidence, forecasts, score), waits: false), Fill);
     }
 
     void ShowUnreadable(string? why)
@@ -317,10 +348,11 @@ sealed class BoardPage
 
         _seats.Children.Clear();
         foreach (var s in seats)
-            _seats.Children.Add(Ui.Col(2,
+            _seats.Children.Add(Ui.Item(Ui.Col(2,
                 Ui.With(Ui.Body(s.Id), t => t.FontWeight = Avalonia.Media.FontWeight.SemiBold),
                 Ui.Micro($"{Labels.BoardSeatClass(s.SeatClass)}; a {s.ModelClass} model from {s.VendorFamily}"),
-                Ui.Micro(Labels.BoardSeatStatus(s.Status))));
+                Ui.With(Ui.Micro(Labels.BoardSeatStatus(s.Status)), t => t.Foreground = s.Status == BoardSeatStatus.Active ? Theme.Text : Theme.TextFaint)),
+                waits: s.Status == BoardSeatStatus.Active));
     }
 
     /// <summary>

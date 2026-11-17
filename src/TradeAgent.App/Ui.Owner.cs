@@ -139,7 +139,4 @@ static partial class Ui
 
     /// <summary>The "For you" page's part with his presses, and its part with what is only a record.</summary>
     internal const string YoursToDecide = "Yours to decide", OnlyRecords = "For your reading";
-
-    /// <summary>Under the private line's figures.</summary>
-    internal const string FindingsCounted = "findings", SevereUnacknowledged = "severe, not acknowledged";
 }

@@ -210,19 +210,23 @@ sealed class OversightPage
         CapSave = BuildSaveCap(CapBox, CurrentCap, _src.Currency, SaveCap, why => Ui.Refuse(CapNote, why));
 
         var empty = OversightWords.Of(null, null, "");
-        var seats = Ui.Col(Theme.S2, [.. empty.SeatClasses.Select(s => Ui.KeyValue(s.Seat, $"{s.Reach} — {s.How}"))]);
+        // EVERY PAIR WRAPS (U-ui-world): a seat's reach and how ran 505 px in a 463 px column on the owner's 1280 screen and was cut.
+        var seats = Ui.Col(Theme.S3, [.. empty.SeatClasses.Select(s => Pair(s.Seat, $"{s.Reach} — {s.How}"))]);
         seats.Children.Add(Ui.With(Ui.Muted(empty.SeatNote), t => t.FontSize = Theme.Small));
-        var thresholds = Ui.Col(Theme.S2, [.. empty.Thresholds.Select(t => Ui.KeyValue(t.Name, t.Value))]);
+        var thresholds = Ui.Col(Theme.S2, [.. empty.Thresholds.Select(t => Pair(t.Name, t.Value))]);
 
-        var body = Ui.Col(Theme.S6,
-            Ui.Col(Theme.S2, _status, Ui.With(Ui.Muted(empty.Cadence), t => t.FontSize = Theme.Small)),
+        // THE LINE AT A GLANCE: whether it runs, then how many findings it holds and how many severe ones wait unacknowledged, set large.
+        var body = Ui.Col(Theme.S8,
+            Ui.Col(Theme.S4,
+                Ui.Col(Theme.S1, _status, Ui.With(Ui.Muted(empty.Cadence), t => t.FontSize = Theme.Small)),
+                Ui.Figures(Ui.Figure(_findingCount, FindingsCounted), Ui.Figure(_severeCount, SevereUnacknowledged))),
             Ui.Section("Latest digest", DigestText),
-            Ui.Col(Theme.S2, Ui.Eyebrow("Findings, by unit, newest first"), FindingCards),
+            Ui.Col(Theme.S3, Ui.Eyebrow("Findings, by unit, newest first"), FindingCards),
             Ui.Section("The line's own failures", _failures),
             Ui.Section("How hidden it is, by seat", seats),
             Ui.Section("Thresholds", thresholds),
-            Ui.Section("Oversight cap", Ui.Col(Theme.S3, CapText,
-                Ui.FieldRow(CapLabel, CapBox), CapSave, CapNote)),
+            Ui.Section("Oversight cap", Ui.Col(Theme.S4, CapText,
+                Ui.Form(CapLabel, CapBox, (string?)null, CapSave), CapNote)),
             // THE PROTECTIONS (U-invariant-registry): read-only and built once — the registry is compiled in and never changes while the app runs.
             ProtectionsSection.Build(InvariantRegistry.All));
 
@@ -234,6 +238,25 @@ sealed class OversightPage
             + "recommends nothing; it cannot instruct, pause or block anything."));
         root.Children.Add(scroll);
         Root = root;
+    }
+
+    /// <summary>Under the line's two figures: what each counts. Here, and nowhere else, because nothing of the line is said elsewhere.</summary>
+    const string FindingsCounted = "findings", SevereUnacknowledged = "severe, not acknowledged";
+
+    /// <summary>The line's two figures, "–" until the owner's file is read.</summary>
+    readonly TextBlock _findingCount = Ui.FigureText(), _severeCount = Ui.FigureText();
+
+    /// <summary>A name and its value side by side, BOTH WRAPPING: neither is ever cut by its column.</summary>
+    static Control Pair(string name, string value)
+    {
+        var key = new TextBlock
+        {
+            Text = name, FontSize = Theme.Small, Foreground = Theme.TextMuted, TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, Theme.S4, 0)
+        };
+        var said = new TextBlock { Text = value, FontSize = Theme.Small, Foreground = Theme.Text, TextWrapping = TextWrapping.Wrap };
+        said[Grid.ColumnProperty] = 1;
+        return new Grid { ColumnDefinitions = new ColumnDefinitions("2*,3*"), Children = { key, said } };
     }
 
     /// <summary>In place on every tick, touching nothing when nothing moved.</summary>
@@ -253,6 +276,10 @@ sealed class OversightPage
             _capRead = true;
             CapBox.OpenOn(read.Cap?.Amount ?? 0m);
         }
+
+        Set(_findingCount, read is null ? "–" : words.Findings.Count.ToString(CultureInfo.InvariantCulture));
+        Set(_severeCount, read is null ? "–" : words.Findings.Count(f => f.Severity == OversightSeverity.Severe && f.Acknowledged is null)
+            .ToString(CultureInfo.InvariantCulture));
 
         var signature = string.Join('|', words.Findings.Select(f => f.Id + "#" + f.Acknowledged));
         if (signature == _signature) return;
@@ -315,18 +342,19 @@ sealed class OversightPage
     {
         var severe = f.Severity == OversightSeverity.Severe;
         var ack = Ui.With(Ui.Muted(""), t => t.FontSize = Theme.Small);
-        var head = Ui.Row(Theme.S2,
-            Ui.Pill(f.Severity, severe ? Theme.Danger : Theme.Neutral),
-            Ui.With(Ui.Body(f.UnitPath), t => t.FontWeight = FontWeight.SemiBold),
-            Ui.Muted(f.Detector),
-            Ui.With(Ui.Muted(f.At), t => t.FontSize = Theme.Small));
-        head.VerticalAlignment = VerticalAlignment.Center;
-        return (Ui.Card(Ui.Col(Theme.S2,
+        // ITS SEVERITY AS A LIGHT AND A WORD, its unit as the name, the detector and the instant quiet beside them.
+        var head = new WrapPanel { Orientation = Orientation.Horizontal, ItemSpacing = Theme.S2, LineSpacing = Theme.S1 };
+        head.Children.Add(Ui.Dot(severe ? Theme.Danger : Theme.Neutral));
+        head.Children.Add(Ui.With(Ui.Body(f.Severity, severe ? Theme.DangerText : Theme.TextMuted), t => { t.FontSize = Theme.Small; t.FontWeight = FontWeight.SemiBold; t.TextWrapping = TextWrapping.NoWrap; }));
+        head.Children.Add(Ui.With(Ui.Body(f.UnitPath), t => t.FontWeight = FontWeight.SemiBold));
+        head.Children.Add(Ui.Muted(f.Detector));
+        head.Children.Add(Ui.With(Ui.Muted(f.At), t => { t.FontSize = Theme.Small; t.TextWrapping = TextWrapping.NoWrap; }));
+        return (Ui.Item(Ui.Col(Theme.S2,
             head,
             Ui.With(Ui.Body(f.Measured), t => t.FontSize = Theme.Small),
             Ui.With(Ui.Mono(f.Cites + "  [" + f.Id + "]", Theme.TextMuted), t => t.TextWrapping = TextWrapping.Wrap),
             Ui.With(Ui.Muted(f.Blind), t => t.FontSize = Theme.Small),
-            ack)), ack);
+            ack), waits: severe && f.Acknowledged is null), ack);
     }
 
     static void Set(TextBlock t, string text)
@@ -348,11 +376,13 @@ sealed class OversightBanner
     IReadOnlyList<string> _counted = [];
     string _shown = "";
 
+    /// <summary>A NOTICE ABOVE THE SHEET, in the danger tone (<c>U-ui-world</c>): the window's own dark under it, an edge all round, read over the floor.</summary>
     public Border Root { get; } = new()
     {
-        Background = Theme.DangerSoft,
+        Background = Theme.NoticeDanger,
         BorderBrush = Theme.Danger,
-        BorderThickness = new Thickness(0, 0, 0, 1),
+        BorderThickness = new Thickness(1),
+        CornerRadius = Theme.Radius,
         Padding = new Thickness(Theme.S5, Theme.S3),
         IsVisible = false
     };
@@ -383,6 +413,7 @@ sealed class OversightBanner
         Acknowledge = Ui.Ghost("Acknowledge", AcknowledgeCounted);
         var actions = Ui.Row(Theme.S2, Open, Acknowledge);
         actions.VerticalAlignment = VerticalAlignment.Center;
+        actions.Margin = new Thickness(Theme.S4, 0, 0, 0);
         actions[Grid.ColumnProperty] = 2;
 
         var dot = Ui.With(Ui.Dot(Theme.Danger), d => d.Margin = new Thickness(0, 0, Theme.S3, 0));
