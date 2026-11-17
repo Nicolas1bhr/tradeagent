@@ -113,6 +113,82 @@ static class FloorPaint
             if (flight.Air) Flight(canvas, flight);
         foreach (var spark in f.Sparks) Spark(canvas, spark);
         foreach (var cell in f.Cells) Marks(canvas, cell);
+        foreach (var column in f.Columns) Column(canvas, column);
+        foreach (var figure in f.Figures) Name(canvas, figure, SKColors.White, 6);
+        foreach (var note in f.FigureNotes) Name(canvas, note, Muted, 5.5f);
+        foreach (var thread in f.Threads) Thread(canvas, thread);
+    }
+
+    /// <summary>
+    /// A UNIT'S COLUMN (the money lens): a box of glass standing on the unit's slab, as tall as what the unit spent today — its top
+    /// and the two sides that face the camera barely there, its edges a line of light. Where what the unit's turns cost is not known,
+    /// the column is an outline in dashes and nothing else: never a column of no height, which would say "nothing".
+    /// </summary>
+    static void Column(SKCanvas canvas, FloorFrame.Column c)
+    {
+        if (c.Strength <= 0.01f) return;
+        using var top = Poly(c.Top);
+        using var front = Poly([c.Foot[0], c.Foot[1], c.Top[1], c.Top[0]]);
+        using var side = Poly([c.Foot[1], c.Foot[2], c.Top[2], c.Top[1]]);
+        using var paint = new SKPaint { IsAntialias = true };
+        if (!c.Unknown)
+        {
+            // Each face is lightest along its top edge and all but gone at its foot: glass seen edge on.
+            void Pane(SKPath face, Vector2 high, Vector2 low, float strength)
+            {
+                paint.Shader = SKShader.CreateLinearGradient(P(high), P(low), [A(SKColors.White, strength * c.Strength), A(SKColors.White, strength * 0.12f * c.Strength)], null,
+                    SKShaderTileMode.Clamp);
+                canvas.DrawPath(face, paint);
+                paint.Shader.Dispose();
+                paint.Shader = null;
+            }
+            Pane(front, (c.Top[0] + c.Top[1]) / 2, (c.Foot[0] + c.Foot[1]) / 2, 0.12f);
+            Pane(side, (c.Top[1] + c.Top[2]) / 2, (c.Foot[1] + c.Foot[2]) / 2, 0.075f);
+            paint.Style = SKPaintStyle.Fill;
+            paint.Color = A(SKColors.White, 0.06f * c.Strength);
+            canvas.DrawPath(top, paint);
+        }
+        paint.Shader = null;
+        paint.Style = SKPaintStyle.Stroke;
+        paint.StrokeWidth = 1;
+        using var dash = c.Unknown ? SKPathEffect.CreateDash([5, 5], 0) : null;
+        paint.PathEffect = dash;
+        paint.Color = A(SKColors.White, (c.Unknown ? 0.34f : 0.5f) * c.Strength);
+        canvas.DrawPath(top, paint);
+        paint.Color = A(SKColors.White, (c.Unknown ? 0.2f : 0.26f) * c.Strength);
+        for (var i = 0; i < 3; i++) canvas.DrawLine(P(c.Foot[i]), P(c.Top[i]), paint);
+    }
+
+    /// <summary>
+    /// AN OPEN TASK (the work lens): a thread over the floor from the seat that gave it to the seat that holds it, and on it a bead as
+    /// far along as the task's time is. A task waiting on its giver — delivered, not judged — wears a ring round its bead.
+    /// </summary>
+    static void Thread(SKCanvas canvas, in FloorFrame.Thread t)
+    {
+        if (t.Strength <= 0.01f || t.Points.Length < 2) return;
+        var light = Light(t.Tone);
+        using var path = Poly(t.Points, close: false);
+        using var paint = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeCap = SKStrokeCap.Round };
+        paint.StrokeWidth = 3.4f;
+        paint.Color = A(light[2], 0.16f * t.Strength);
+        paint.MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 3);
+        canvas.DrawPath(path, paint);
+        paint.MaskFilter?.Dispose();
+        paint.MaskFilter = null;
+        paint.StrokeWidth = 1.1f;
+        paint.Color = A(light[1], 0.62f * t.Strength);
+        canvas.DrawPath(path, paint);
+
+        paint.Style = SKPaintStyle.Fill;
+        paint.Color = A(light[2], 0.3f * t.Strength);
+        canvas.DrawCircle(P(t.Bead), 7, paint);
+        paint.Color = A(light[0], t.Strength);
+        canvas.DrawCircle(P(t.Bead), 3, paint);
+        if (!t.Waiting) return;
+        paint.Style = SKPaintStyle.Stroke;
+        paint.StrokeWidth = 1.2f;
+        paint.Color = A(light[0], 0.8f * t.Strength);
+        canvas.DrawCircle(P(t.Bead), 9, paint);
     }
 
     /// <summary>
@@ -352,7 +428,10 @@ static class FloorPaint
     }
 
     /// <summary>A unit's name, lying on its slab: set in the floor's own two directions, so it turns and foreshortens with the floor.</summary>
-    static void Name(SKCanvas canvas, FloorFrame.Name name)
+    static void Name(SKCanvas canvas, FloorFrame.Name name) => Name(canvas, name, Faint, 7.5f);
+
+    /// <summary>Words lying on the floor or on something standing on it, in <paramref name="ink"/>; left off where they would be smaller than <paramref name="least"/> pixels a letter.</summary>
+    static void Name(SKCanvas canvas, FloorFrame.Name name, SKColor ink, float least)
     {
         if (name.Strength <= 0.02f || name.Text.Length == 0) return;
         using var font = new SKFont(_medium ?? SKTypeface.Default, 100) { Subpixel = true, Edging = SKFontEdging.Antialias, Hinting = SKFontHinting.None };
@@ -362,7 +441,7 @@ static class FloorPaint
         // and the seat's own callout says where it is instead.
         var size = Math.Min(name.Size, name.Room * 100 / wide);
         var across = name.Along.Length();
-        if (size * across < 7.5f) return;
+        if (size * across < least) return;
         var k = size / 100f;
         var matrix = new SKMatrix
         {
@@ -370,7 +449,7 @@ static class FloorPaint
             SkewY = name.Along.Y * k, ScaleY = -name.Up.Y * k, TransY = name.At.Y,
             Persp2 = 1
         };
-        using var paint = new SKPaint { IsAntialias = true, Color = A(Faint, 0.92f * name.Strength) };
+        using var paint = new SKPaint { IsAntialias = true, Color = A(ink, 0.92f * name.Strength) };
         canvas.Save();
         canvas.Concat(in matrix);
         canvas.DrawText(name.Text, 0, 0, SKTextAlign.Left, font, paint);

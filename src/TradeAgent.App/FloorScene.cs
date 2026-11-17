@@ -39,6 +39,31 @@ readonly record struct FloorCamera(float Yaw, float Pitch, float Zoom, Vector2 S
 }
 
 /// <summary>
+/// HOW THE FLOOR IS READ (<c>U-ui-world</c>). <see cref="Structure"/>: as it stands — who sits where and who is working.
+/// <see cref="Work"/>: with every open task drawn as a thread from the seat that gave it to the seat that holds it.
+/// <see cref="Money"/>: with every unit standing in a column of glass as tall as what it spent today. The floor is the same floor;
+/// a lens only adds what a page beside it is about.
+/// </summary>
+enum FloorLens { Structure, Work, Money }
+
+/// <summary>
+/// One open task as the floor draws it: from the seat that gave it to the seat that holds it, how far through its time it is (0 at
+/// its start, 1 at its deadline), and whether it is waiting on the giver — delivered, not yet judged.
+/// </summary>
+readonly record struct FloorThread(string From, string To, float Along, FloorTone Tone, bool Waiting);
+
+/// <summary>
+/// One unit's day as the floor draws it: how tall its column stands, from 0 to 1 of the tallest, or — where turns ran and what they
+/// cost is not known — a column drawn as an outline only, never as an empty one.
+/// </summary>
+readonly record struct FloorColumn(float Height, bool Unknown)
+{
+    /// <summary>What is written on the column's lid: the figure, and under it what it is a figure of.</summary>
+    public string Figure { get; init; } = "";
+    public string Of { get; init; } = "";
+}
+
+/// <summary>
 /// ONE PART OF THE FLOOR, and the angle it is looked at from: the box (least and most of each axis) a camera frames when it goes there.
 /// </summary>
 readonly record struct FloorLook(Vector3 Min, Vector3 Max, float Yaw, float Pitch);
@@ -104,6 +129,19 @@ sealed class FloorFrame
     public readonly record struct Pane(float X, float Y, float Width, float Height, float Radius, float Strength);
 
     public Pane[] Glass = [];
+
+    /// <summary>An open task: its arc over the floor, where along it its bead is, and how much of it is shown.</summary>
+    public readonly record struct Thread(Vector2[] Points, Vector2 Bead, float Strength, FloorTone Tone, bool Waiting);
+
+    /// <summary>A unit's column: its foot and its top (four corners each, as a slab's), how much of it is shown, and where its figure is written.</summary>
+    public readonly record struct Column(string Unit, Vector2[] Foot, Vector2[] Top, float Strength, bool Unknown);
+
+    public Thread[] Threads = [];
+    public Column[] Columns = [];
+
+    /// <summary>What is written on the columns' lids, lying on them as a unit's name lies on its slab: each figure, and what it is a figure of.</summary>
+    public Name[] Figures = [];
+    public Name[] FigureNotes = [];
 
     /// <summary>Where the pointer is over the window, or null while it is not over it: the glass is lit a little round it.</summary>
     public Vector2? Pointer;
@@ -191,6 +229,12 @@ sealed class FloorScene
         public static Stand Between(Stand a, Stand b, float t) =>
             new(a.Yaw + (b.Yaw - a.Yaw) * t, a.Pitch + (b.Pitch - a.Pitch) * t, a.Zoom + (b.Zoom - a.Zoom) * t, Vector2.Lerp(a.Offset, b.Offset, t));
     }
+
+    FloorLens _lens;
+    float _workShown, _moneyShown;
+    IReadOnlyList<FloorThread> _threads = [];
+    IReadOnlyDictionary<string, FloorColumn> _columns = new Dictionary<string, FloorColumn>();
+    readonly Dictionary<string, float> _columnNow = new(StringComparer.Ordinal);
 
     Stand _stand, _from, _to;
     float _glide = 1, _glideLasts = 1;
@@ -416,10 +460,13 @@ sealed class FloorScene
         id == OwnerId ? _plan.Owner : _plan.ById.TryGetValue(id, out var cell) ? cell.Top : null;
 
     /// <summary>The way through the air: up off one cell, over, and down onto the other — higher the further apart they stand.</summary>
-    static Vector3[] Arc(Vector3 a, Vector3 b)
+    /// <summary>How tall a column of the money lens stands at the least — a unit that spent next to nothing still stands — and how much taller the tallest is.</summary>
+    const float ColumnLeast = 0.22f, ColumnMost = 2.5f;
+
+    static Vector3[] Arc(Vector3 a, Vector3 b, float lift = 1)
     {
         const int steps = 26;
-        var height = 0.7f + Vector3.Distance(a, b) * 0.22f;
+        var height = (0.7f + Vector3.Distance(a, b) * 0.22f) * lift;
         var path = new Vector3[steps + 1];
         for (var i = 0; i <= steps; i++)
         {
@@ -519,6 +566,15 @@ sealed class FloorScene
             if (_flecks[i].Age >= _flecks[i].Lasts) _flecks.RemoveAt(i);
         }
 
+        _workShown = Toward(_workShown, _lens == FloorLens.Work ? 1 : 0, dt, 2.4f, ref busy);
+        _moneyShown = Toward(_moneyShown, _lens == FloorLens.Money ? 1 : 0, dt, 2.4f, ref busy);
+        if (_moneyShown > 0 || _columnNow.Count > 0)
+        {
+            foreach (var (unit, column) in _columns)
+                _columnNow[unit] = Toward(_columnNow.GetValueOrDefault(unit), column.Unknown ? 0 : column.Height, dt, 2.2f, ref busy);
+            foreach (var gone in _columnNow.Keys.Where(k => !_columns.ContainsKey(k)).ToList()) _columnNow.Remove(gone);
+        }
+
         var before = _lean;
         _lean += (_leanWanted - _lean) * Math.Min(1, dt * 3.5f);
         if (Vector2.DistanceSquared(before, _lean) > 1e-7f) busy = true;
@@ -552,6 +608,43 @@ sealed class FloorScene
         // Another minute landed: its end lights for a moment. That is the tape's own business and not a reason for the camera to stir.
         if (tape is not null && _tape is not null) _tapeFresh = 1;
         _tape = tape;
+        Busy = true;
+    }
+
+    /// <summary>How the floor is read from now on (<see cref="FloorLens"/>): what the lens adds comes in, what the last one added goes.</summary>
+    public void Lens(FloorLens lens)
+    {
+        if (_lens == lens) return;
+        var money = lens == FloorLens.Money || _lens == FloorLens.Money;
+        _lens = lens;
+        // The money lens stands columns on the floor: with them, or without them again, the floor is framed afresh.
+        if (money)
+        {
+            _refit = true;
+            _travelLasts = TravelLasts;
+        }
+        Attend();
+    }
+
+    public FloorLens Reading => _lens;
+
+    /// <summary>The open tasks, for the work lens. Told the same ones again, nothing stirs.</summary>
+    public void Threads(IReadOnlyList<FloorThread> threads)
+    {
+        if (_threads.SequenceEqual(threads)) return;
+        _threads = threads;
+        if (_lens == FloorLens.Work) Busy = true;
+    }
+
+    /// <summary>Each unit's column, by unit, for the money lens. Told the same ones again, nothing stirs.</summary>
+    public void Columns(IReadOnlyDictionary<string, FloorColumn> columns)
+    {
+        if (_columns.Count == columns.Count && _columns.All(c => columns.TryGetValue(c.Key, out var other) && other == c.Value)) return;
+        _columns = columns;
+        if (_lens != FloorLens.Money) return;
+        // Taller or shorter columns are a different thing to frame: the camera travels to fit them.
+        _refit = true;
+        _travelLasts = TravelLasts;
         Busy = true;
     }
 
@@ -684,6 +777,15 @@ sealed class FloorScene
             Hold(_plan.Owner + new Vector3(0.5f, 0.5f, 0));
             if (_tape is not null && TapeStrip() is { } strip)
                 foreach (var corner in strip.Corners) Hold(corner);
+            // Under the money lens the columns are part of what stands on the floor, as tall as they will be once they have risen.
+            if (_lens == FloorLens.Money)
+                foreach (var slab in _plan.Slabs)
+                {
+                    if (!_columns.TryGetValue(slab.Unit, out var column)) continue;
+                    var top = slab.Z1 + ColumnLeast + ColumnMost * (column.Unknown ? 0 : column.Height);
+                    Hold(new Vector3(slab.X0, slab.Y0, top)); Hold(new Vector3(slab.X1, slab.Y0, top));
+                    Hold(new Vector3(slab.X1, slab.Y1, top)); Hold(new Vector3(slab.X0, slab.Y1, top));
+                }
         }
 
         var zoom = Math.Min((clear.R - clear.L) / Math.Max(0.1f, maxX - minX), (clear.B - clear.T) / Math.Max(0.1f, maxY - minY));
@@ -868,6 +970,62 @@ sealed class FloorScene
             rings.Add(new FloorFrame.Ring(points, (1 - p) * (1 - p), r.Tone));
         }
         frame.Rings = [.. rings];
+
+        // THE WORK LENS: every open task an arc from the seat that gave it to the seat that holds it, its bead as far along as its time is.
+        if (_workShown > 0.01f && _threads.Count > 0)
+        {
+            var threads = new List<FloorFrame.Thread>();
+            var between = new Dictionary<(string, string), int>();
+            foreach (var t in _threads)
+            {
+                if (t.From == t.To || Place(t.From) is not { } a || Place(t.To) is not { } b) continue;
+                // Two tasks between the same two seats do not lie on one line: each next one arches a little higher.
+                var key = string.CompareOrdinal(t.From, t.To) < 0 ? (t.From, t.To) : (t.To, t.From);
+                var nth = between[key] = between.GetValueOrDefault(key) + 1;
+                var arc = Arc(a, b, 1 + 0.32f * (nth - 1));
+                var at = Math.Clamp(t.Along, 0, 1) * (arc.Length - 1);
+                var i = Math.Min((int)at, arc.Length - 2);
+                threads.Add(new FloorFrame.Thread([.. arc.Select(cam.Point)], cam.Point(Vector3.Lerp(arc[i], arc[i + 1], at - i)), Ease(_workShown), t.Tone, t.Waiting));
+            }
+            frame.Threads = [.. threads];
+        }
+
+        // THE MONEY LENS: every unit that ran a turn today stands in a column of glass on its own slab, as tall as what it spent.
+        if (_moneyShown > 0.01f && _columns.Count > 0)
+        {
+            var columns = new List<(float Depth, FloorFrame.Column Column)>();
+            var figures = new List<FloorFrame.Name>();
+            var notes = new List<FloorFrame.Name>();
+            foreach (var slab in _plan.Slabs)
+            {
+                if (!_columns.TryGetValue(slab.Unit, out var column)) continue;
+                const float inset = 0.07f;
+                var tall = (ColumnLeast + ColumnMost * _columnNow.GetValueOrDefault(slab.Unit)) * Ease(_moneyShown);
+                Vector3[] foot =
+                [
+                    new(slab.X0 + inset, slab.Y0 + inset, slab.Z1), new(slab.X1 - inset, slab.Y0 + inset, slab.Z1),
+                    new(slab.X1 - inset, slab.Y1 - inset, slab.Z1), new(slab.X0 + inset, slab.Y1 - inset, slab.Z1)
+                ];
+                var up = new Vector3(0, 0, tall);
+                columns.Add((slab.Level * 1000 - cam.Project(foot[0]).Z, new FloorFrame.Column(slab.Unit,
+                    [.. foot.Select(cam.Point)], [.. foot.Select(p => cam.Point(p + up))], Ease(_moneyShown), column.Unknown)));
+
+                // ITS FIGURE LIES ON ITS LID, in the corner nearest the camera, the way the unit's name lies on its slab: the figure, and
+                // nearer still and smaller, what it is a figure of.
+                var room = slab.X1 - slab.X0 - 2 * inset - 0.36f;
+                FloorFrame.Name Lying(string text, float y, float size)
+                {
+                    var at = new Vector3(slab.X0 + inset + 0.18f, slab.Y0 + inset + y, slab.Z1 + tall);
+                    var on = cam.Point(at);
+                    return new FloorFrame.Name(text, on, cam.Point(at + new Vector3(1, 0, 0)) - on, cam.Point(at + new Vector3(0, 1, 0)) - on, size, room, Ease(_moneyShown));
+                }
+                if (column.Figure.Length > 0) figures.Add(Lying(column.Figure, 0.36f, 0.34f));
+                if (column.Of.Length > 0) notes.Add(Lying(column.Of, 0.14f, 0.17f));
+            }
+            frame.Columns = [.. columns.OrderBy(c => c.Depth).Select(c => c.Column)];
+            frame.Figures = [.. figures];
+            frame.FigureNotes = [.. notes];
+        }
 
         var sparks = new List<FloorFrame.Spark>();
         foreach (var fleck in _flecks)

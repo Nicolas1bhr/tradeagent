@@ -1,4 +1,5 @@
 using System.Globalization;
+using TradeAgent.Core.Db;
 
 namespace TradeAgent.Core;
 
@@ -40,6 +41,21 @@ public static partial class Labels
     public static string FindOnPage(string page) => $"on the {page} page";
     /// <summary>What a found page says under its own name: the place it is a leaf of.</summary>
     public static string FindInPlace(string place) => $"in {place}";
+
+    /// <summary>
+    /// What a figure at the top of a unit's column is a figure of (the floor's money lens): an API key's spend is real money; the
+    /// plan's is its capacity counted at list price, and not money. Never one word for both.
+    /// </summary>
+    public static string FloorCostOf(string billingClass) => BillingClasses.Of(billingClass) switch
+    {
+        BillingClasses.Key => "real money today",
+        BillingClasses.Plan => "of the plan's capacity today, at list price",
+        _ => "counted today"
+    };
+
+    /// <summary>What stands under "unknown" on a unit whose turns reported no cost: how many, and that it is not a figure.</summary>
+    public static string FloorCostUnpriced(int turns) =>
+        $"{turns.ToString(CultureInfo.InvariantCulture)} {(turns == 1 ? "turn" : "turns")} reported no cost";
 
     /// <summary>The press that puts a sheet away and gives the floor the whole window back.</summary>
     public const string SheetClose = "Back to the floor";

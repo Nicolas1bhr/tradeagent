@@ -79,6 +79,12 @@ sealed record FloorSources
 
     public Func<DateTimeOffset> Now { get; init; } = () => DateTimeOffset.UtcNow;
 
+    /// <summary>
+    /// Today's spend by unit and by who paid — the Costs page's own read (<see cref="AiAttemptStore.UnitTotalsByClass"/> over the
+    /// owner's day) — or null where the launch ledger is not open. For the floor's money lens; read only while that lens is on.
+    /// </summary>
+    public Func<DateTimeOffset, IReadOnlyList<UnitClassTotals>?> Costs { get; init; } = _ => null;
+
     /// <summary>The sources over the running app.</summary>
     public static FloorSources For(AppHost host)
     {
@@ -93,6 +99,7 @@ sealed record FloorSources
         Board = () => host.Board.Seats(),
         Glance = () => GlanceRead.From(host, DateTimeOffset.UtcNow),
         AiRunning = () => host.Agent.Running,
+        Costs = now => host.AttemptLedger is { } ledger && OwnerDay.Window(now) is var (from, to) ? ledger.UnitTotalsByClass(from, to) : null,
         TurnsOpen = () => host.Mission.Status is { State: MissionState.Working or MissionState.Waiting, Held: null }
                           && host.DiskPauseWords is null && host.CrashWaitWords is null
     };
@@ -433,7 +440,17 @@ sealed partial class FloorPage
     /// </summary>
     public void Go(MainWindow.Page page)
     {
+        var lens = page switch
+        {
+            MainWindow.Page.Work => FloorLens.Work,
+            MainWindow.Page.Costs => FloorLens.Money,
+            _ => FloorLens.Structure
+        };
+        var read = lens == FloorLens.Money && _stage.Scene.Reading != FloorLens.Money;
         _place = page;
+        _stage.Scene.Lens(lens);
+        // The money lens has its own read: asked for now, not at the next look.
+        if (read) { _costs = null; Read(); }
         if (page != MainWindow.Page.Floor && _chosen is not null)
         {
             _chosen = null;
@@ -555,12 +572,17 @@ sealed partial class FloorPage
 
         /// <summary>Whether turns are being opened now (<see cref="FloorSources.TurnsOpen"/>).</summary>
         public bool Opening { get; init; }
+
+        /// <summary>Today's spend by unit and class, read only while the money lens is on; null otherwise or where it could not be read.</summary>
+        public IReadOnlyList<UnitClassTotals>? Costs { get; init; }
     }
 
     // What the reads keep between looks. Touched only by the read itself, which never overlaps another.
     GlanceRead? _glance;
     DateTimeOffset _glanceAt, _tapeAt;
     FloorTapeRead? _tape;
+    IReadOnlyList<UnitClassTotals>? _costs;
+    DateTimeOffset _costsAt;
     static readonly TimeSpan TapeEvery = TimeSpan.FromSeconds(15);
     readonly List<FloorMarks> _marks = [];
 
@@ -667,9 +689,16 @@ sealed partial class FloorPage
             _tape = TapeAt(now, TapeStretch);
             _tapeAt = now;
         }
+        // THE MONEY LENS'S READ, only while that lens is on and as often as "At a glance": a figure nobody is looking at is not read.
+        if (_place == MainWindow.Page.Costs && (_costs is null || now - _costsAt >= GlanceEvery))
+        {
+            try { _costs = _sources.Costs(now); }
+            catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException)) { _costs = null; }
+            _costsAt = now;
+        }
         return new Reading(chart, names, open, events, since is null, _glance, _sources.AiRunning(), now, until, null)
         {
-            Tape = _tape, Opening = _sources.TurnsOpen()
+            Tape = _tape, Opening = _sources.TurnsOpen(), Costs = _place == MainWindow.Page.Costs ? _costs : null
         };
     }
 
@@ -718,6 +747,7 @@ sealed partial class FloorPage
             .Select(o => o.Mandate.Holder).ToHashSet(StringComparer.Ordinal) ?? [];
         _stage.Scene.Flag(late);
 
+        Lenses(r);
         foreach (var e in r.Events) Happened(e, moving: !r.Backfill);
         if (_seen is null || r.Until > _seen) _seen = r.Until;
         _stage.Scene.Tape(r.Tape is { } tape ? Drawn(tape.Symbol, tape.Bars, r.Now) : null);
@@ -726,6 +756,62 @@ sealed partial class FloorPage
         Feed();
         // The scene was told what the look found; if that was nothing new, no frame is drawn for it.
         _stage.Nudge();
+    }
+
+    /// <summary>
+    /// WHAT THE LENSES DRAW, from the same read every page shows (<c>U-ui-world</c>). The work lens: each open task a thread from the
+    /// seat that gave it to the seat that holds it, its bead as far along as its time is — amber once it is past its deadline — and a
+    /// delivery not yet judged a thread back to its giver, waiting at the giver's end. The money lens: each unit a column as tall as
+    /// its day's spend beside the tallest, with its figure written at its top.
+    /// </summary>
+    void Lenses(Reading r)
+    {
+        var threads = new List<FloorThread>();
+        if (r.Glance is { } glance)
+        {
+            var judged = glance.Deliveries?.Rows.Select(d => d.Mandate.Id).ToHashSet(StringComparer.Ordinal) ?? [];
+            foreach (var open in glance.Mandates?.Rows ?? [])
+            {
+                var m = open.Mandate;
+                if (judged.Contains(m.Id)) continue;
+                var span = (m.Deadline - m.CreatedAt).TotalSeconds;
+                var along = span <= 0 ? 1 : (float)Math.Clamp((r.Now - m.CreatedAt).TotalSeconds / span, 0, 1);
+                var late = open.Status != MandateEventKind.Delivered && r.Now > m.Deadline;
+                // Its bead moves by the minute, not by the second: told the same thread again, the floor draws nothing.
+                threads.Add(new FloorThread(m.Decider, m.Holder, MathF.Round(along * 200) / 200, late ? FloorTone.Caution : FloorTone.Work, false));
+            }
+            foreach (var waits in glance.Deliveries?.Rows ?? [])
+                threads.Add(new FloorThread(waits.Mandate.Holder, waits.Mandate.Decider, 1, FloorTone.Work, true));
+        }
+        _stage.Scene.Threads(threads);
+
+        var columns = new Dictionary<string, FloorColumn>(StringComparer.Ordinal);
+        if (r.Costs is { } costs)
+        {
+            // REAL MONEY IS WHAT A COLUMN'S HEIGHT IS — an API key's spend — and where no unit spent any, the plan's capacity at list
+            // price, said as that. The two are never added and never drawn on one scale.
+            var basis = costs.Any(c => c.BillingClass == BillingClasses.Key && c.Totals.Spent > 0) ? BillingClasses.Key
+                : costs.Any(c => c.BillingClass == BillingClasses.Plan && c.Totals.Spent > 0) ? BillingClasses.Plan : null;
+            var most = basis is null ? 0 : costs.Where(c => c.BillingClass == basis).Max(c => c.Totals.Spent);
+            foreach (var unit in costs.GroupBy(c => c.UnitId, StringComparer.Ordinal))
+            {
+                var of = basis is null ? null : unit.FirstOrDefault(c => c.BillingClass == basis)?.Totals;
+                var unpriced = unit.Sum(c => c.Totals.Unpriced);
+                if (of is { Turns: > 0 } t)
+                {
+                    columns[unit.Key] = new FloorColumn(most <= 0 ? 0 : (float)(t.Spent / most), false)
+                    {
+                        Figure = Labels.Money(t.Spent, _currency), Of = Labels.FloorCostOf(basis!)
+                    };
+                }
+                else if (unpriced > 0)
+                {
+                    // Turns ran here and nobody knows what they cost: an outline and the word, never a column of nothing.
+                    columns[unit.Key] = new FloorColumn(0, true) { Figure = Labels.FloorUnknown, Of = Labels.FloorCostUnpriced(unpriced) };
+                }
+            }
+        }
+        _stage.Scene.Columns(columns);
     }
 
     /// <summary>One recorded event: its sentence is kept, and — unless it is only history being filled in — it is shown happening.</summary>
@@ -958,6 +1044,7 @@ sealed partial class FloorPage
 
         var stage = new Rect(_stage.Bounds.Size).Deflate(8);
         var placed = new List<Rect>();
+
         foreach (var id in wanted)
         {
             if (!cells.TryGetValue(id, out var box)) continue;
