@@ -789,7 +789,7 @@ public class EarlierArmedHomeTests
             var window = File.ReadAllText(Path.Combine(Repo(), "src", "TradeAgent.App", "MainWindow.cs"));
             var shell = window[window.IndexOf("void EnsureShell()", StringComparison.Ordinal)..window.IndexOf("Control BuildHeader()", StringComparison.Ordinal)];
             Assert.Contains("_shellSurface.Children.Add(Ui.With(BuildEarlierArmedStrip(), c => c[Grid.RowProperty] = 1));", shell, StringComparison.Ordinal);
-            Assert.True(shell.IndexOf("BuildEarlierArmedStrip()", StringComparison.Ordinal) < shell.IndexOf("Select(Page.Chat);", StringComparison.Ordinal));
+            Assert.True(shell.IndexOf("BuildEarlierArmedStrip()", StringComparison.Ordinal) < shell.IndexOf("Select(Page.Floor);", StringComparison.Ordinal));
             var update = window[window.IndexOf("void UpdateShell(GatewayStatus status)", StringComparison.Ordinal)..];
             Assert.Contains("_earlierArmed?.Update();", update[..update.IndexOf("_modePillHost", StringComparison.Ordinal)], StringComparison.Ordinal);
             // AND ONE STRIP ONLY: the owner's page no longer builds a card of its own.

@@ -11,6 +11,8 @@ public sealed class TradeAgentApp : Application
 {
     AppHost? _host;
 
+    static int _interRegistered;
+
     /// <summary>The SIGTERM registration, held for the app's life: a registration nobody holds can be collected.</summary>
     PosixSignalRegistration? _stopSignal;
 
@@ -22,6 +24,12 @@ public sealed class TradeAgentApp : Application
     /// </summary>
     public override void Initialize()
     {
+        // THE APP'S TYPE, registered here and not on the builder, so every way this application is started carries it: the window's
+        // own start and the headless one the render rows use. Once per process: the font manager is the process's, and a second
+        // application object (a test host builds several) must not add the collection twice.
+        if (Interlocked.Exchange(ref _interRegistered, 1) == 0)
+            Avalonia.Media.FontManager.Current.AddFontCollection(new Avalonia.Fonts.Inter.InterFontCollection());
+
         Styles.Add(new FluentTheme());
         Styles.Add(Theme.Build());
         RequestedThemeVariant = ThemeVariant.Dark;

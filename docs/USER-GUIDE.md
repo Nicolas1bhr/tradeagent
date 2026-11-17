@@ -308,10 +308,53 @@ asked of you, and nothing is opened outside the TradeAgent window.
 
 ## The window
 
-Fourteen pages, down the left-hand side, in this order: **Chat**, **Organisation**, **Work**, **Costs**,
-**Dashboard**, **Board**, **Daily report**, **Inbox**, **Owner**, **For you**, **Settings**, **Activity**,
-**Checks** and **Oversight**. Organisation, Work and Costs only read the organisation's own records:
-nothing on them can be changed from them, except the presses each one names below.
+Fifteen pages, down the left-hand side, each with a small drawing beside its name, in this order:
+**The floor** and **Chat**; under *The organisation*, **Organisation**, **Work** and **Costs**; under
+*Trading*, **Dashboard**, **Board** and **Daily report**; under *You and the AI*, **Inbox**, **Owner**
+and **For you**; under *This computer*, **Settings**, **Activity** and **Checks**; and, alone under
+*Yours alone*, **Oversight**. The page you are on has its drawing lit. If the window is too short to
+show them all, the list scrolls. The floor, Organisation, Work and Costs only read the organisation's
+own records: nothing on them can be changed from them, except the presses each one names below.
+
+**The floor** — the page TradeAgent opens on: your organisation drawn as a place. Every unit is a low
+slab with its name written on it, standing on the unit that holds it; every position is a glass cell on
+its unit's slab, the head at the back and its members in front. The security board stands behind the
+organisation, beside the ring marked **You**. What a cell looks like is what its position is doing:
+
+- **Bright**, with four small corners round it, its name and a running clock: a turn is open in it
+  right now. Under the name is the last thing it asked of TradeAgent's tools.
+- **A faint light**: the position is active and no turn is open in it. While the AI is not running the
+  light is fainter still.
+- **Dark glass**: dormant. It has a place and takes no turn until it is activated.
+- **A dashed square with nothing standing in it**: a unit with nobody at its head.
+- **A small amber light over a cell**: that position holds a task that is past its deadline.
+
+When one position gives another a task, hands back a delivery, accepts or rejects one, or escalates, a
+light crosses the floor between the two along the lines that join them; an escalation that reaches you
+runs to your ring. A ring opening round a cell is a decision or a turn ending, in amber when the turn was
+cut off and red when it ended with an error. Down the right is **What just happened**: the same things in
+sentences, newest first, each with the time it was recorded. Anything an AI wrote is inside quotation
+marks; everything else is TradeAgent's own record. Along the bottom are today's AI turns and spend, the
+tasks open and the deliveries waiting to be judged, the same figures the other pages show.
+
+Point at a cell to see its full name and what it is; press it and the sentences become that position's
+own — what it did and what reached it — until you press **Show everything**. Nothing on this page
+changes anything, with one exception: while the AI is not running it has the same **Start the AI**
+button the Chat page has.
+
+**Replay** is under the title. The organisation works a turn at a time, sometimes hours apart, so what it
+did overnight is not something you can sit and watch as it happens. Press **The last hour**, **The last
+24 hours** or **Everything recorded** and the floor plays that stretch back in about a minute, skipping
+the stretches in which nothing was open. While it plays, the page says it is a replay and of what moment,
+and the figures about today are put away; the strip along the top of the window goes on saying what is
+true now. A replay starts nothing and changes nothing: it is a reading of your own records. It draws the
+positions that exist today, each appearing at the moment it was created; a position that has since ended
+is not drawn, though what it did is still in the sentences. **Back to now** ends it, and so does going to
+another page.
+
+The floor draws itself only while something on it is moving, and if your computer is slow to draw it — a
+computer without a graphics card, or a remote screen — it stops its slow turning and falls back to a
+slower, plainer picture by itself. What it says does not change.
 
 **Chat** — the conversation with the AI. Type in the box at the bottom and press send. Its answers
 appear as they are written. When it reads a price, looks at your account or places an order, that
