@@ -37,7 +37,7 @@ static class Ui
     {
         Text = text, FontSize = Theme.Display, FontFamily = Theme.SansDisplay,
         FontWeight = FontWeight.SemiBold, Foreground = Theme.Text, LineHeight = Theme.DisplayLine,
-        TextWrapping = TextWrapping.Wrap
+        LetterSpacing = Theme.DisplayTracking, TextWrapping = TextWrapping.Wrap
     };
 
     /// <summary>A sign-in code, sized to be read off the screen and typed into a phone: mono, display size, its whole glyph height inside its line box.</summary>
@@ -50,13 +50,14 @@ static class Ui
     public static TextBlock H1(string text) => new()
     {
         Text = text, FontSize = Theme.H1, FontFamily = Theme.SansDisplay,
-        FontWeight = FontWeight.SemiBold, Foreground = Theme.Text, LineHeight = 28,
-        TextWrapping = TextWrapping.Wrap
+        FontWeight = FontWeight.SemiBold, Foreground = Theme.Text, LineHeight = Theme.H1Line,
+        LetterSpacing = Theme.H1Tracking, TextWrapping = TextWrapping.Wrap
     };
 
     public static TextBlock H2(string text) => new()
     {
-        Text = text, FontSize = Theme.H2, FontWeight = FontWeight.SemiBold, Foreground = Theme.Text, LineHeight = 22
+        Text = text, FontSize = Theme.H2, FontWeight = FontWeight.SemiBold, Foreground = Theme.Text, LineHeight = 22,
+        LetterSpacing = Theme.H2Tracking
     };
 
     public static TextBlock H3(string text) => new()
@@ -92,7 +93,7 @@ static class Ui
     public static TextBlock Eyebrow(string text) => new()
     {
         Text = text.ToUpperInvariant(), FontSize = Theme.Micro, FontWeight = FontWeight.SemiBold,
-        Foreground = Theme.TextFaint, LetterSpacing = 0.9
+        Foreground = Theme.TextFaint, LetterSpacing = 1.1
     };
 
     /// <summary>The old name for <see cref="Eyebrow"/>, kept so existing screens keep compiling.</summary>
@@ -145,7 +146,7 @@ static class Ui
         Padding = new Thickness(Theme.S5),
         CornerRadius = Theme.Radius,
         BorderThickness = new Thickness(1),
-        BorderBrush = Theme.Line,
+        BorderBrush = Theme.CardEdge,
         Background = Theme.BgElevated,
         Child = inner
     };

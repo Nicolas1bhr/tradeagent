@@ -227,6 +227,26 @@ public static partial class Labels
     /// <summary>The line above a decision's forecasts: they are the forecaster's claim; the resolution is the app's.</summary>
     public const string WorkForecastNote = "A forecast is its author's claim; whether it came true is the app's own record.";
 
+    /// <summary>
+    /// THE SLOW CALLS, IN WORDS (<c>U-door-bounds</c>): each call of the last day that took a quarter or more of the time an AI working through
+    /// the door waits for one, slowest first — who, which tool, how long, how it ended — and what the limit means. Empty when none was slow.
+    /// </summary>
+    public static string WorkSlowCalls(IReadOnlyList<(string Who, string Tool, TimeSpan Took, string Ended)> calls, TimeSpan limit)
+    {
+        if (calls.Count == 0) return "";
+        var each = string.Join("; ", calls.Select(c => $"{c.Who}'s '{c.Tool}' call took {Took(c.Took)} and was {c.Ended}"));
+        var over = calls.Any(c => c.Took >= limit)
+            ? " One ran past that: an AI working through TradeAgent's door is told such a call failed, although TradeAgent finished it."
+            : "";
+        return $"Slow tool calls in the last day: {each}. An AI working through TradeAgent's door waits {Took(limit)} for one call.{over}";
+
+        static string Took(TimeSpan t) => t.TotalMinutes < 1
+            ? $"{((int)Math.Round(t.TotalSeconds)).ToString(CultureInfo.InvariantCulture)} s"
+            : t.Seconds == 0
+                ? $"{((int)t.TotalMinutes).ToString(CultureInfo.InvariantCulture)} min"
+                : $"{((int)t.TotalMinutes).ToString(CultureInfo.InvariantCulture)} min {t.Seconds.ToString(CultureInfo.InvariantCulture)} s";
+    }
+
     // ---- Costs -----------------------------------------------------------------------------------
 
     public const string CostsSubtitle =

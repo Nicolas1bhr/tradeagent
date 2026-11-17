@@ -7,7 +7,15 @@ namespace TradeAgent.AgentRuntime;
 /// ONE OPEN PIECE OF WORK A ROLE OWNS: which objective it is an instance of, and the entity it is about —
 /// an owner message's event id, a request id, a boundary id, a position, a deployment.
 /// </summary>
-public sealed record RoleObjective(string Kind, string Entity);
+public sealed record RoleObjective(string Kind, string Entity, RoleObjectiveUnit? Unit = null);
+
+/// <summary>
+/// THE UNIT AN OBJECTIVE IS ABOUT, as the chart holds it (<c>U-head-staffs</c>): its id, its kind and the instant the fact behind the objective
+/// was recorded — the unit's charter for a vacant head, the head's hire for a head with no mandate — and, for a vacant head, the positions
+/// the unit holds that have not ended, so its line never calls a unit with members empty (0 on the other kind). App rows only, so the packet
+/// can say what is wanted in the app's words; null on every kind that is not about a unit.
+/// </summary>
+public sealed record RoleObjectiveUnit(string Id, string Kind, DateTimeOffset Since, int Positions = 0);
 
 /// <summary>
 /// WHAT EACH ROLE IS FOR, AS THE APP RECORDS IT — the desired world of <c>docs/VISION.md</c> § 6.7, as app data
@@ -36,7 +44,7 @@ public static class RoleObjectives
     /// kind is added, removed or derived differently — the attempt that ran under the old meaning stays true about
     /// what it ran under.
     /// </summary>
-    public const int Version = 4;
+    public const int Version = 5;
 
     /// <summary>Operations: every message the owner typed reaches a turn, and that turn's outcome is written.</summary>
     public const string OwnerAnswered = "owner-message-answered";
@@ -86,6 +94,19 @@ public static class RoleObjectives
     /// </summary>
     public const string ProposalUnread = "proposal-unread";
 
+    /// <summary>
+    /// A UNIT DIRECTLY UNDER THE ONE THIS POSITION HEADS WHOSE HEAD IS VACANT (<c>U-head-staffs</c>, v5; D13-hire): only its parent's head may
+    /// appoint one, so the vacancy is that head's open work until it does. Closed by the hire with its head flag, or the unit's closing. The
+    /// entity is the unit's id.
+    /// </summary>
+    public const string UnitUnstaffed = "unit-unstaffed";
+
+    /// <summary>
+    /// AN ACTIVE HEAD OF A UNIT UNDER THE ONE THIS POSITION HEADS, HOLDING NO OPEN MANDATE THIS POSITION DECIDES (<c>U-head-staffs</c>, v5): the
+    /// same gap one arrow after the appointment. Closed by one mandate-assign. The entity is that head's position id.
+    /// </summary>
+    public const string HeadUnmandated = "head-unmandated";
+
     /// <summary>The entity of <see cref="PositionWatched"/> when the host has no reading of the book to give.</summary>
     public const string UnreadBook = "the book has not been read";
 
@@ -96,7 +117,8 @@ public static class RoleObjectives
 
     /// <summary>
     /// The objective kinds a role holds, in this build (<c>U-org-assignments-a</c>, version 3; <c>U-org-verbs-a</c>, version 4 — a
-    /// head also owns the proposals it has not yet been woken for): the legacy pair's, each by its
+    /// head also owns the proposals it has not yet been woken for; <c>U-head-staffs</c>, version 5 — and a unit under its own with no head,
+    /// or whose head holds no mandate from it): the legacy pair's, each by its
     /// exact id, unchanged; a HEAD after them (<paramref name="kind"/> as the chart derives it) owns the owner's words addressed to
     /// it (<c>U-org-wakes</c>), the mandates it holds, and — as a decider — its deliveries to judge, its escalations and its
     /// mandates past their deadline; a member or the staff owns the mandates it holds and nothing else — an executor's objective is
@@ -106,7 +128,8 @@ public static class RoleObjectives
     {
         CouncilRoles.Operations => [OwnerAnswered, RequestFinal, PositionWatched, BoundaryAssessed],
         CouncilRoles.Research => [ResearchMandate, VerdictRead, ForwardRunFollowed, BoundaryAssessed],
-        _ when kind == OrgPositionKind.Head => [OwnerAnswered, MandateOwed, DeliveryToJudge, EscalationOpen, MandateExpired, ProposalUnread],
+        _ when kind == OrgPositionKind.Head => [OwnerAnswered, MandateOwed, DeliveryToJudge, EscalationOpen, MandateExpired, ProposalUnread,
+            UnitUnstaffed, HeadUnmandated],
         _ when kind is not null => [MandateOwed],
         _ => []
     };
@@ -178,6 +201,15 @@ public static class RoleObjectives
                     foreach (var m in org.ExpiredUnread(role)) open.Add(new RoleObjective(MandateExpired, m));
                 if (kinds.Contains(ProposalUnread))
                     foreach (var m in org.ProposalsUnread(role)) open.Add(new RoleObjective(ProposalUnread, m));
+
+                // AND THE UNITS UNDER ITS OWN (U-head-staffs, v5): one whose head is vacant, and one whose active head holds no mandate
+                // from it — each read from the chart's rows, which only the app's own verbs write.
+                if (kinds.Contains(UnitUnstaffed))
+                    foreach (var u in org.UnstaffedUnder(role))
+                        open.Add(new RoleObjective(UnitUnstaffed, u.Id, new RoleObjectiveUnit(u.Id, u.Kind, u.CreatedAt, org.PositionsNotEnded(u.Id))));
+                if (kinds.Contains(HeadUnmandated))
+                    foreach (var h in org.UnmandatedUnder(role))
+                        open.Add(new RoleObjective(HeadUnmandated, h.Head!, new RoleObjectiveUnit(h.Unit.Id, h.Unit.Kind, h.HeadSince!.Value)));
                 return open;
         }
 

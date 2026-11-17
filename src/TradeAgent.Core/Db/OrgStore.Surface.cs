@@ -45,6 +45,13 @@ public sealed partial class OrgStore
     public SeatAssurance? SeatAssuranceOf(string position) => db.Read(_ => RecordedAssurance(position));
 
     /// <summary>
+    /// THE TOOL CALLS SINCE <paramref name="since"/> THAT TOOK AT LEAST <paramref name="atLeast"/>, slowest first (<c>U-door-bounds</c>): the
+    /// app's own measure of each call, which the Work page names. <see cref="ToolCallStore.SlowSince"/>'s one query.
+    /// </summary>
+    public IReadOnlyList<ToolCallRow> SlowCallsSince(DateTimeOffset since, TimeSpan atLeast, int limit) =>
+        new ToolCallStore(db).SlowSince(since, atLeast, limit);
+
+    /// <summary>
     /// EVERY OPEN MANDATE ON THE CHART, newest first, each with its latest status and its measured spend — ONE query. Open is what
     /// <see cref="IsOpen"/> says: no closing event has been written. A mandate whose stored claims cannot be read is refused by its id, never thrown through the list. A mandate's spend is the launch ledger's, as <see cref="SpendOf"/>
     /// reads it; a resolved launch with no cost is counted apart in <see cref="MandateSpend.Unknown"/> and never added as zero.

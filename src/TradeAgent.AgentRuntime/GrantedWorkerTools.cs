@@ -189,6 +189,10 @@ public sealed class GrantedWorkerTools(
     /// <inheritdoc />
     public async Task<ToolAnswer> InvokeAsync(ToolRequest call, CancellationToken ct = default)
     {
+        // THE CALL'S OWN WALL TIME (U-door-bounds): from here to the record, served or refused alike — a verdict the app stopped is a
+        // refusal — what the vendor's per-call limit is measured against. A monotonic clock, never the injected wall clock, which a test
+        // may hold still. A call cancelled out of this method writes no row, as before: the oversight's refusals stay the app's refusals.
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         var (args, badJson) = Parse(call.Arguments);
         var answer = badJson is not null
             ? ToolAnswer.Refused(badJson, call.Name)
@@ -205,7 +209,7 @@ public sealed class GrantedWorkerTools(
         // WHAT THE CALLER RECEIVES IS WHAT THE ROW MEASURES (U-thinking-seats-b fix pass 1, R3): a transport that cuts an
         // answer — the broker door's per-result cap — cuts it here, before the record, never after it.
         if (deliver is not null) answer = answer with { Content = deliver(answer.Content) };
-        Record(call, answer);
+        Record(call, answer, System.Diagnostics.Stopwatch.GetElapsedTime(started));
         return answer;
     }
 
@@ -427,7 +431,7 @@ public sealed class GrantedWorkerTools(
 
     // ---- the record -------------------------------------------------------------------------------
 
-    void Record(ToolRequest call, ToolAnswer answer) =>
+    void Record(ToolRequest call, ToolAnswer answer, TimeSpan took) =>
         ledger?.Record(new ToolCallRow
         {
             At = _now(),
@@ -437,7 +441,8 @@ public sealed class GrantedWorkerTools(
             Argument = answer.Summary,
             Bytes = Encoding.UTF8.GetByteCount(answer.Content),
             Served = answer.Served,
-            Refusal = answer.Served ? null : answer.Content
+            Refusal = answer.Served ? null : answer.Content,
+            Duration = took
         });
 
     static string Summary(string tool, string? what, int? bytes = null) =>

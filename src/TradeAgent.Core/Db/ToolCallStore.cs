@@ -28,6 +28,12 @@ public sealed record ToolCallRow
 
     /// <summary>Why it was refused, present exactly when <see cref="Served"/> is false.</summary>
     public string? Refusal { get; init; }
+
+    /// <summary>
+    /// THE APP'S OWN WALL TIME FOR THE CALL (<c>U-door-bounds</c>, rung 58): from its arrival to its answer, served or refused alike.
+    /// Null on a row written before the rung, and on a row a surface records without timing a call (an export's or a material read's detail row).
+    /// </summary>
+    public TimeSpan? Duration { get; init; }
 }
 
 /// <summary>
@@ -65,12 +71,13 @@ public sealed class ToolCallStore(Database db)
             return db.Write(_ =>
             {
                 using var c = db.Cmd("""
-                    INSERT INTO tool_call(at, attempt, role, tool, argument, bytes, served, refusal)
-                    VALUES($at,$attempt,$role,$tool,$arg,$bytes,$served,$refusal) RETURNING id
+                    INSERT INTO tool_call(at, attempt, role, tool, argument, bytes, served, refusal, duration_ms)
+                    VALUES($at,$attempt,$role,$tool,$arg,$bytes,$served,$refusal,$ms) RETURNING id
                     """,
                     ("$at", Sql.T(row.At)), ("$attempt", row.Attempt), ("$role", row.Role),
                     ("$tool", row.Tool), ("$arg", Short(row.Argument)), ("$bytes", row.Bytes),
-                    ("$served", row.Served ? 1 : 0), ("$refusal", Short(row.Refusal)));
+                    ("$served", row.Served ? 1 : 0), ("$refusal", Short(row.Refusal)),
+                    ("$ms", row.Duration is { } d ? (long)Math.Round(d.TotalMilliseconds) : null));
                 return Convert.ToInt64(c.ExecuteScalar());
             });
         }
@@ -79,13 +86,21 @@ public sealed class ToolCallStore(Database db)
 
     /// <summary>Every call one attempt made, oldest first. For the record and for the tests.</summary>
     public IReadOnlyList<ToolCallRow> ForAttempt(string attempt) =>
-        Query("SELECT id, at, attempt, role, tool, argument, bytes, served, refusal FROM tool_call "
-              + "WHERE attempt=$a ORDER BY id", ("$a", attempt));
+        Query($"SELECT {Cols} FROM tool_call WHERE attempt=$a ORDER BY id", ("$a", attempt));
 
     /// <summary>Every call in a window, oldest first — the day the owner's report covers.</summary>
     public IReadOnlyList<ToolCallRow> Between(DateTimeOffset from, DateTimeOffset to) =>
-        Query("SELECT id, at, attempt, role, tool, argument, bytes, served, refusal FROM tool_call "
-              + "WHERE at>=$f AND at<$t ORDER BY id", ("$f", Sql.T(from)), ("$t", Sql.T(to)));
+        Query($"SELECT {Cols} FROM tool_call WHERE at>=$f AND at<$t ORDER BY id", ("$f", Sql.T(from)), ("$t", Sql.T(to)));
+
+    /// <summary>
+    /// THE CALLS SINCE <paramref name="since"/> THAT TOOK AT LEAST <paramref name="atLeast"/>, slowest first, at most <paramref name="limit"/>:
+    /// what the Work page names (<c>U-door-bounds</c>). A row with no duration is never one of them.
+    /// </summary>
+    public IReadOnlyList<ToolCallRow> SlowSince(DateTimeOffset since, TimeSpan atLeast, int limit) =>
+        Query($"SELECT {Cols} FROM tool_call WHERE at>=$s AND duration_ms>=$ms ORDER BY duration_ms DESC, id LIMIT $n",
+            ("$s", Sql.T(since)), ("$ms", (long)Math.Ceiling(atLeast.TotalMilliseconds)), ("$n", limit));
+
+    const string Cols = "id, at, attempt, role, tool, argument, bytes, served, refusal, duration_ms";
 
     /// <summary>
     /// THE BYTES ONE ROLE WAS SERVED BY ONE TOOL SINCE AN INSTANT: the count a bound can stand on (<c>DataExports</c>), because no name in a
@@ -114,7 +129,8 @@ public sealed class ToolCallStore(Database db)
                 Argument = r.IsDBNull(5) ? null : r.GetString(5),
                 Bytes = r.GetInt64(6),
                 Served = r.GetInt64(7) != 0,
-                Refusal = r.IsDBNull(8) ? null : r.GetString(8)
+                Refusal = r.IsDBNull(8) ? null : r.GetString(8),
+                Duration = r.IsDBNull(9) ? null : TimeSpan.FromMilliseconds(r.GetInt64(9))
             });
         return rows;
     });

@@ -25,7 +25,7 @@ public class OrgSurfaceShellTests
     }
 
     /// <summary>
-    /// (a) THE RAIL LISTS THE PAGES IN ORDER: Chat, then Organisation, Work and Costs under the words the labels spell, before every older page —
+    /// (a) THE RAIL LISTS THE PAGES IN ORDER: the floor (<c>U-ui-alive</c>), Chat, then Organisation, Work and Costs under the words the labels spell, before every older page —
     /// and each is built into the page host and refreshed by the window's own tick, so a page in the rail is a page that exists and is kept current.
     /// A source assertion, as the two-press factories' is (<c>TwoPressGrantTests</c>): the window itself needs a platform no unit test has.
     /// RED at base: the rail held Chat, Dashboard and the older pages only.
@@ -36,8 +36,8 @@ public class OrgSurfaceShellTests
         var text = Source("MainWindow.cs");
         var entries = MainWindow.Rail.Select(r => (Page: r.Page.ToString(), Label: r.Label)).ToList();
 
-        Assert.Equal(new[] { "Chat", "Organisation", "Work", "Costs" }, entries.Take(4).Select(e => e.Page));
-        Assert.Equal(new[] { "Chat", Labels.NavOrganisation, Labels.NavWork, Labels.NavCosts }, entries.Take(4).Select(e => e.Label));
+        Assert.Equal(new[] { "Floor", "Chat", "Organisation", "Work", "Costs" }, entries.Take(5).Select(e => e.Page));
+        Assert.Equal(new[] { Labels.NavFloor, "Chat", Labels.NavOrganisation, Labels.NavWork, Labels.NavCosts }, entries.Take(5).Select(e => e.Label));
         Assert.Equal(new[] { "Organisation", "Work", "Costs" }, new[] { Labels.NavOrganisation, Labels.NavWork, Labels.NavCosts });
         Assert.Equal(entries.Count, entries.Select(e => e.Page).Distinct().Count());   // no page twice
 
