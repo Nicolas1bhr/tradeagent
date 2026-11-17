@@ -121,6 +121,9 @@ sealed class FloorPlan
     /// <summary>The line from the security board's slab forward to the organisation's back edge; empty where there is no board.</summary>
     public Vector3[] BoardLine { get; } = [];
 
+    /// <summary>The organisation's own slab — the root's — or null on an empty floor: what the tape is laid in front of.</summary>
+    public Slab? Ground { get; }
+
     /// <summary>The corners of everything, for a camera to fit: the least and the most of each axis.</summary>
     public Vector3 Min { get; }
     public Vector3 Max { get; }
@@ -185,6 +188,7 @@ sealed class FloorPlan
             BoardLine = [new Vector3(x0 + w / 2, y0, Step), new Vector3(x0 + w / 2, y0, 0), new Vector3(x0 + w / 2, 0, 0)];
         }
 
+        Ground = root is null ? null : slabs[0];
         Slabs = slabs;
         Cells = cells;
         Channels = channels;

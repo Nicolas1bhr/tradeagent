@@ -25,7 +25,12 @@ namespace TradeAgent.App;
 static class Pages
 {
     public static Control Header(string title, string subtitle) =>
-        Ui.With(Ui.Col(Theme.S1, Ui.H1(title), Ui.Muted(subtitle)),
+        Ui.With(Ui.Col(Theme.S1, Ui.H1(title), Ui.With(Ui.Muted(subtitle), t =>
+            {
+                // A line of words is read, not scanned: no wider than a reader's eye crosses comfortably, however wide the window is.
+                t.MaxWidth = Theme.LedeMaxWidth;
+                t.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left;
+            })),
             c => c.Margin = new Thickness(0, 0, 0, Theme.S6));
 
     /// <summary>A scrolling page body with room for the scrollbar to sit outside the content.</summary>

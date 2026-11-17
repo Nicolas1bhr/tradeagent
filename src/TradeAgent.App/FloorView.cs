@@ -13,6 +13,35 @@ using TradeAgent.Gateway;
 
 namespace TradeAgent.App;
 
+/// <summary>The minutes of one recorded series as the floor's tape shows them: whose, and each minute's opening time and close, oldest first.</summary>
+sealed record FloorTapeRead(string Symbol, IReadOnlyList<(DateTimeOffset Open, decimal Close)> Bars);
+
+/// <summary>
+/// THE TAPE'S READER (<c>U-ui-alive</c>): the last minutes of the series this installation recorded most lately — the collector's own rows,
+/// read in process as the paper runner reads them. Which series that is is looked up once and kept for ten minutes: finding it counts
+/// every series' rows, and a floor that did that on every look would be paying for a question whose answer does not change.
+/// One reader at a time: the page's reads never overlap.
+/// </summary>
+sealed class FloorTapeReader(Func<ForwardBarStore?> store)
+{
+    string? _symbol;
+    DateTimeOffset _chosen;
+
+    public FloorTapeRead? Read(DateTimeOffset until, TimeSpan stretch)
+    {
+        if (store() is not { } bars) return null;
+        var now = DateTimeOffset.UtcNow;
+        if (_symbol is null || now - _chosen > TimeSpan.FromMinutes(10))
+        {
+            _symbol = bars.All().Where(s => s.Bars > 0).OrderByDescending(s => s.LastBar).FirstOrDefault()?.Symbol;
+            _chosen = now;
+        }
+        if (_symbol is null) return null;
+        var rows = bars.Since(_symbol, until - stretch, 2000).Where(b => b.OpenTime <= until).ToList();
+        return rows.Count < 2 ? null : new FloorTapeRead(_symbol, [.. rows.Select(b => (b.OpenTime, b.Close))]);
+    }
+}
+
 /// <summary>
 /// WHAT THE FLOOR IS HANDED (<c>U-ui-alive</c>): the ledgers it reads, as delegates, so the page the owner sees and the page a test draws
 /// are the same control over different sources. <b>Reads only</b>: nothing here writes, and none of it reaches the agent-facing pipe.
@@ -31,13 +60,25 @@ sealed record FloorSources
     /// <summary>"At a glance", the read every other page shows: the loop's state, today's spend, what waits on whom, the queued wakes.</summary>
     public Func<GlanceRead?> Glance { get; init; } = () => null;
 
+    /// <summary>
+    /// The tape: the minutes recorded in the stretch ending at a moment, of the series recorded most lately — or null where none is
+    /// recorded. The market's own prices as this installation collected them; nothing of the AI's.
+    /// </summary>
+    public Func<DateTimeOffset, TimeSpan, FloorTapeRead?> Tape { get; init; } = (_, _) => null;
+
     /// <summary>Whether an AI is running at all: while it is not, the floor offers the same start the Chat page does.</summary>
     public Func<bool> AiRunning { get; init; } = () => false;
 
     public Func<DateTimeOffset> Now { get; init; } = () => DateTimeOffset.UtcNow;
 
     /// <summary>The sources over the running app.</summary>
-    public static FloorSources For(AppHost host) => new()
+    public static FloorSources For(AppHost host)
+    {
+        var tape = new FloorTapeReader(() => host.OrgLedger is null ? null : new ForwardBarStore(host.Db));
+        return Over(host) with { Tape = tape.Read };
+    }
+
+    static FloorSources Over(AppHost host) => new()
     {
         Org = () => host.OrgLedger,
         Floor = () => host.OrgLedger is null ? null : new FloorStore(host.Db),
@@ -326,6 +367,11 @@ sealed partial class FloorPage
     /// </summary>
     internal bool Manual { get; init; }
 
+    /// <summary>Whether the floor builds itself the first time it is shown: as the window runs it, yes; stepped by a host, only if that host asks.</summary>
+    internal bool Opening { get; init; }
+
+    bool Opens => !Manual || Opening;
+
     /// <summary>One read of the ledgers and its showing, on the calling thread.</summary>
     internal void ReadNow() => Apply(Take(_seen));
 
@@ -334,6 +380,7 @@ sealed partial class FloorPage
     {
         if (_shown == shown) return;
         _shown = shown;
+        _stage.Stepped = Manual;
         _stage.Show(shown);
         if (Manual) return;
         if (shown)
@@ -361,7 +408,36 @@ sealed partial class FloorPage
     // ---- the read, off the UI thread --------------------------------------------------------------------------------------------
 
     sealed record Reading(FloorChart Chart, OrgNames Names, IReadOnlyList<FloorTurn> Open, IReadOnlyList<FloorEvent> Events, bool Backfill,
-        GlanceRead? Glance, bool Running, DateTimeOffset Now, DateTimeOffset Until, string? Problem);
+        GlanceRead? Glance, bool Running, DateTimeOffset Now, DateTimeOffset Until, string? Problem)
+    {
+        public FloorTapeRead? Tape { get; init; }
+    }
+
+    /// <summary>How much of the tape the floor shows: the last two hours of minutes.</summary>
+    static readonly TimeSpan TapeStretch = TimeSpan.FromHours(2);
+
+    /// <summary>A newest minute older than this is said to be old: the collector looks every minute, so a tape being recorded is never this far behind.</summary>
+    static readonly TimeSpan TapeStale = TimeSpan.FromMinutes(6);
+
+    /// <summary>The tape, or none — and none too where it could not be read: a strip of prices is not worth losing the floor for.</summary>
+    FloorTapeRead? TapeAt(DateTimeOffset until, TimeSpan stretch)
+    {
+        try { return _sources.Tape(until, stretch); }
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException)) { return null; }
+    }
+
+    /// <summary>The minutes as the scene draws them: each close as a height between the stretch's least and its most, and the words beside the newest.</summary>
+    static FloorTape? Drawn(string symbol, IReadOnlyList<(DateTimeOffset Open, decimal Close)> bars, DateTimeOffset? now)
+    {
+        if (bars.Count < 2) return null;
+        decimal least = bars.Min(b => b.Close), most = bars.Max(b => b.Close), span = most - least;
+        var heights = bars.Select(b => span == 0 ? 0.5f : (float)((b.Close - least) / span)).ToArray();
+        var (opened, close) = bars[^1];
+        // A minute's bar closes a minute after it opens; how old the tape is is counted from there.
+        var age = now is { } at ? at - opened.AddMinutes(1) : TimeSpan.Zero;
+        var stale = age > TapeStale;
+        return new FloorTape(symbol, heights, stale ? Labels.FloorTapeStale(symbol, close, age) : Labels.FloorTapeCaption(symbol, close), stale);
+    }
 
     void Read()
     {
@@ -402,7 +478,10 @@ sealed partial class FloorPage
         var open = floor.Turns(now, now).Where(t => t.EndedAt is null && t.StartedAt >= now.AddDays(-1)).ToList();
         // The first look fills the sentences from the last day, with nothing moving; every later one takes only what is new.
         var events = since is { } from ? floor.Events(from, until) : floor.Events(until.AddDays(-1), until, 400, tools: false);
-        return new Reading(chart, names, open, events, since is null, _sources.Glance(), _sources.AiRunning(), now, until, null);
+        return new Reading(chart, names, open, events, since is null, _sources.Glance(), _sources.AiRunning(), now, until, null)
+        {
+            Tape = TapeAt(now, TapeStretch)
+        };
     }
 
     // ---- what the read said, on the UI thread -----------------------------------------------------------------------------------
@@ -423,8 +502,9 @@ sealed partial class FloorPage
         if (r.Chart.Signature != _chartSignature)
         {
             _chartSignature = r.Chart.Signature;
-            // The first floor stands at once; a change to it afterwards grows in where it stands.
-            _stage.Scene.Lay(new FloorPlan(r.Chart), atOnce: !_laid);
+            // The first floor builds itself as the page opens; a change to it afterwards grows in where it stands. A host that steps
+            // the page itself is shown it standing.
+            _stage.Scene.Lay(new FloorPlan(r.Chart), atOnce: !_laid && !Opens, assembling: !_laid && Opens);
             _laid = true;
         }
 
@@ -442,6 +522,7 @@ sealed partial class FloorPage
 
         foreach (var e in r.Events) Happened(e, moving: !r.Backfill);
         _seen = r.Until;
+        _stage.Scene.Tape(r.Tape is { } tape ? Drawn(tape.Symbol, tape.Bars, r.Now) : null);
 
         Say(r, loop);
         Feed();

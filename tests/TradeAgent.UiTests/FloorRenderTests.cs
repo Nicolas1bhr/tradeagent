@@ -8,6 +8,7 @@ using TradeAgent.AgentRuntime;
 using TradeAgent.App;
 using TradeAgent.Connectors.Fake;
 using TradeAgent.Core;
+using TradeAgent.Core.Data;
 using TradeAgent.Core.Db;
 using Xunit;
 using Xunit.Abstractions;
@@ -93,6 +94,31 @@ public class FloorRenderTests(ITestOutputHelper output)
         });
         Assert.True(admitted.Admitted, admitted.Refusal);
         return id;
+    }
+
+    /// <summary>
+    /// <paramref name="n"/> closed minutes of <paramref name="symbol"/> ending <paramref name="ago"/> before now, appended the way the
+    /// collector appends them. The closes are a made-up walk round 100: these rows test a drawing, and say nothing of any market.
+    /// </summary>
+    static decimal Minutes(Database db, string symbol, int n, TimeSpan ago)
+    {
+        var last = DateTimeOffset.UtcNow - ago;
+        last = new DateTimeOffset(last.Year, last.Month, last.Day, last.Hour, last.Minute, 0, TimeSpan.Zero).AddMinutes(-1);
+        var bars = new List<ForwardBars.Kline>();
+        var close = 100m;
+        for (var i = n - 1; i >= 0; i--)
+        {
+            var open = last.AddMinutes(-i);
+            close = Math.Round(100m + 6m * (decimal)Math.Sin((n - i) / 9.0) + 0.05m * (n - i), 2);
+            bars.Add(new ForwardBars.Kline(open, close, close + 0.5m, close - 0.5m, close, 10m, open.AddMinutes(1).AddMilliseconds(-1)));
+        }
+        var stored = new ForwardBarStore(db).Append(new ForwardFetchAttempt
+        {
+            Source = ForwardBars.Source, Symbol = symbol, Url = $"http://127.0.0.1:0/api/v3/klines?symbol={symbol}&interval=1m",
+            RequestedAt = last.AddMinutes(1), ReceivedAt = last.AddMinutes(1).AddSeconds(1), HttpStatus = 200, BodySha256 = new string('c', 64)
+        }, bars);
+        Assert.Equal(n, stored.Stored);
+        return close;
     }
 
     static void Step(FloorPage page, double seconds)
@@ -260,6 +286,74 @@ public class FloorRenderTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// THE TAPE IS THE MINUTES THIS INSTALLATION RECORDED, AND NOTHING WHERE IT RECORDED NONE. Read through the collector's own store: with
+    /// no bars there is no tape on the floor; with two hours of them there is a ribbon of that many minutes, its newest end named with the
+    /// series and its last close; and one whose newest minute is old says how old instead of looking current.
+    /// </summary>
+    [Fact]
+    public async Task The_tape_is_the_minutes_recorded_says_when_they_are_old_and_is_absent_where_there_are_none()
+    {
+        using var db = OwnerPagesSeed.Working(Path.Combine(UiTestHome.Home, $"tape-{Guid.NewGuid():n}.db"));
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            HeadlessUi.Run(() =>
+            {
+                var page = Page(host);
+                var win = Framed(page.Root, 1280, 800);
+                win.Show();
+                win.UpdateLayout();
+                page.Shown(true);
+                page.ReadNow();
+                Step(page, 1);
+                Assert.Null(page.Stage.Last!.Tape);                                 // nothing recorded: nothing drawn, and nothing invented
+
+                var close = Minutes(db, "BTCUSDT", 150, TimeSpan.FromMinutes(1));
+                page.ReadNow();
+                win.UpdateLayout();
+                Step(page, 3);
+                var tape = page.Stage.Last!.Tape!;
+                // THE LAST TWO HOURS of them, oldest first, each standing between the strip and the top the stretch's highest close reaches.
+                Assert.InRange(tape.Top.Length, 118, 121);
+                Assert.Equal(tape.Top.Length, tape.Foot.Length);
+                Assert.All(Enumerable.Range(0, tape.Top.Length), i => Assert.True(tape.Top[i].Y < tape.Foot[i].Y, "a minute stands below the strip"));
+                Assert.Equal(Labels.FloorTapeCaption("BTCUSDT", close), tape.Caption);
+                Assert.False(tape.Stale);
+                var frame = Capture(win, "floor-tape-1280x800.png");
+                // DRAWN, in pixels: the ribbon's top edge is brighter than the dark beside the strip.
+                var mid = tape.Top[tape.Top.Length / 2];
+                Assert.True(Brightness(frame, mid) > Brightness(frame, new System.Numerics.Vector2(mid.X, tape.Foot[^1].Y + 40)) + 25, "the tape's line is not drawn");
+                win.Close();
+            });
+        }
+        finally { await host.Gateway.DisposeAsync(); }
+
+        // AN OLD TAPE SAYS SO: the same minutes, the newest forty minutes back.
+        using var old = OwnerPagesSeed.Working(Path.Combine(UiTestHome.Home, $"tape-old-{Guid.NewGuid():n}.db"));
+        var stale = AppHost.Composed(old, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            HeadlessUi.Run(() =>
+            {
+                var close = Minutes(old, "ETHUSDT", 60, TimeSpan.FromMinutes(40));
+                var page = Page(stale);
+                var win = Framed(page.Root, 1280, 800);
+                win.Show();
+                win.UpdateLayout();
+                page.Shown(true);
+                page.ReadNow();
+                Step(page, 3);
+                var tape = page.Stage.Last!.Tape!;
+                Assert.True(tape.Stale);
+                Assert.StartsWith(Labels.FloorTapeCaption("ETHUSDT", close) + "  ·  last recorded 4", tape.Caption);
+                Assert.EndsWith(" min ago", tape.Caption);
+                win.Close();
+            });
+        }
+        finally { await stale.Gateway.DisposeAsync(); }
+    }
+
+    /// <summary>
     /// THE STAGE DRAWS WHILE SOMETHING MOVES AND STOPS WHEN NOTHING DOES. The page as the window runs it — its own timers, its reads off the
     /// UI thread — over the headless platform's frame clock: the first read lays the floor and a frame is drawn; with nothing moving and no
     /// drift, tick after tick draws nothing more; and one thing sent across the floor draws frames again until it has arrived.
@@ -332,6 +426,7 @@ public class FloorRenderTests(ITestOutputHelper output)
         var copy = Path.Combine(UiTestHome.Home, $"demo-{Guid.NewGuid():n}.db");
         File.Copy(DemoDb, copy);
         using var db = new Database(copy);
+        Minutes(db, "BTCUSDT", 240, TimeSpan.FromMinutes(1));
         var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
         try
         {
@@ -380,6 +475,7 @@ public class FloorRenderTests(ITestOutputHelper output)
         var copy = Path.Combine(UiTestHome.Home, $"film-{Guid.NewGuid():n}.db");
         File.Copy(DemoDb, copy);
         using var db = new Database(copy);
+        Minutes(db, "BTCUSDT", 420, TimeSpan.FromMinutes(1));
         var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
         var inv = System.Globalization.CultureInfo.InvariantCulture;
         var hours = double.TryParse(Environment.GetEnvironmentVariable("TA_FLOOR_FILM_HOURS"), inv, out var h) ? h : 3;
@@ -388,25 +484,36 @@ public class FloorRenderTests(ITestOutputHelper output)
         {
             HeadlessUi.Run(() =>
             {
-                Directory.CreateDirectory(Film);
-                var page = Page(host);
+                var folder = Film;
+                Directory.CreateDirectory(folder);
+                // As the window opens it: the floor builds itself, stands a moment, and then the replay runs.
+                var page = new FloorPage(FloorSources.For(host), () => Task.CompletedTask, _ => { }) { Manual = true, Opening = true };
                 var win = Framed(page.Root, 1600, 900);
                 win.Show();
                 win.UpdateLayout();
                 page.Shown(true);
                 page.ReadNow();
                 win.UpdateLayout();
-                Step(page, 1);
+                const double frame = 1 / 30.0;
+                var n = 0;
+                void Keep()
+                {
+                    win.UpdateLayout();
+                    var shot = win.CaptureRenderedFrame() ?? throw new InvalidOperationException("no frame");
+                    shot.Save(Path.Combine(folder, $"f{n++:0000}.png"), new PngBitmapEncoderOptions());
+                }
+                for (var t = 0.0; t < 3.6; t += frame)
+                {
+                    page.Stage.Step((float)frame);
+                    Keep();
+                }
                 var replay = page.ReadReplay(TimeSpan.FromHours(hours)) ?? throw new InvalidOperationException("nothing to replay");
                 page.BeginReplay(replay);
-                const double frame = 1 / 30.0;
-                for (var i = 0; i * frame < seconds; i++)
+                for (var t = 0.0; t < seconds; t += frame)
                 {
                     page.ReplayStep(frame);
                     page.Stage.Step((float)frame);
-                    win.UpdateLayout();
-                    var shot = win.CaptureRenderedFrame() ?? throw new InvalidOperationException("no frame");
-                    shot.Save(Path.Combine(Film, $"f{i:0000}.png"), new PngBitmapEncoderOptions());
+                    Keep();
                 }
                 win.Close();
             });
