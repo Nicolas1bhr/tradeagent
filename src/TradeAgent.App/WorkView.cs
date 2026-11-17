@@ -48,6 +48,18 @@ sealed record MandateWords(string Id, string Header, string Status, string Terms
 {
     /// <summary>The ids behind the header's names (<c>U-ui-glance</c>), for the header's hover.</summary>
     public string Ids { get; init; } = "";
+
+    /// <summary>
+    /// THE RECORD'S OWN FIGURES BEHIND THE SENTENCES (<c>U-ui-world</c>), so the page draws them without reading a sentence back: when it was
+    /// issued, its deadline and the time of the read; what was allocated and the AI spend counted against it (null where every turn reported
+    /// no cost, so nothing known is counted — unknown, never zero).
+    /// </summary>
+    public DateTimeOffset Issued { get; init; }
+    public DateTimeOffset Deadline { get; init; }
+    public DateTimeOffset Now { get; init; }
+    public decimal Allocation { get; init; }
+    public decimal? Spent { get; init; }
+    public string Currency { get; init; } = "";
 }
 
 /// <summary>One delivery waiting to be judged. <see cref="Report"/> and <see cref="Deviations"/> are the holder's claims; <see cref="Checks"/> are the app's results.</summary>
@@ -55,6 +67,9 @@ sealed record DeliveryWords(string Id, string Header, string Report, string Devi
 {
     /// <summary>The ids behind the header's names, for the header's hover.</summary>
     public string Ids { get; init; } = "";
+
+    /// <summary>Each of the app's checks, passed or failed, in the order <see cref="Checks"/> names them (<c>U-ui-world</c>: drawn as marks).</summary>
+    public IReadOnlyList<bool> Passed { get; init; } = [];
 }
 
 /// <summary>One decision. <see cref="Choice"/>, <see cref="Options"/> and <see cref="Rationale"/> are its author's claims; <see cref="Forecasts"/> says each claim and then the app's resolution.</summary>
@@ -124,7 +139,13 @@ sealed record WorkWords(
         return new MandateWords(m.Id, $"{n.Position(m.Holder)} holds it for {n.Position(m.Decider)}",
             $"Status: {o.Status ?? "no status is recorded"}.", terms, objective, spend, late.Length > 0)
         {
-            Ids = $"Mandate {m.Id}; held by {m.Holder}; decided by {m.Decider}"
+            Ids = $"Mandate {m.Id}; held by {m.Holder}; decided by {m.Decider}",
+            Issued = m.CreatedAt,
+            Deadline = m.Deadline,
+            Now = read.Now,
+            Allocation = m.Allocation,
+            Spent = o.Spend.Spent == 0m && o.Spend.Unknown > 0 ? null : o.Spend.Spent,
+            Currency = read.Currency
         };
     }
 
@@ -150,7 +171,8 @@ sealed record WorkWords(
             $"{holder} delivered {OrgText.When(d.Delivery.At)}; {n.Position(d.Mandate.Decider)} has not judged it.",
             OrgText.Claim(holder, d.Delivery.Report), deviations, checks)
         {
-            Ids = $"Delivery {d.Delivery.Id} on mandate {d.Mandate.Id}; delivered by {d.Mandate.Holder}; to be judged by {d.Mandate.Decider}"
+            Ids = $"Delivery {d.Delivery.Id} on mandate {d.Mandate.Id}; delivered by {d.Mandate.Holder}; to be judged by {d.Mandate.Decider}",
+            Passed = [.. d.Checks.Select(c => c.Passed)]
         };
     }
 
@@ -192,6 +214,12 @@ sealed record WorkWords(
 /// what was decided lately. <b>It only reads</b> — a mandate is judged, accepted or cancelled by the position that decides it, through its own
 /// verbs, never from here — and it shows the organisation's words as words: quoted and attributed.
 ///
+/// <para><b>Drawn on glass (<c>U-ui-world</c>).</b> Four counts set large at the head; each mandate with its time drawn as a line from issued to
+/// deadline with now marked (amber only past its deadline, the app's caution rule), how long is left said beside its holder, its status as a dot
+/// and a word, and its spend of what it was allocated as a measure (unknown drawn empty, never as nothing spent); each delivery with the app's
+/// checks as marks; the decisions as a time line down the page. The organisation's words stay italic, quoted after who wrote them, each in a
+/// line of its own — never beside a figure.</para>
+///
 /// <para><b>Built once, updated in place.</b> The skeleton is made in the constructor; each mandate's, delivery's and decision's card is made the
 /// first time its id is seen and kept (<see cref="LiveList{T}"/>), and a refresh writes new text into the same text blocks.</para>
 /// </summary>
@@ -201,12 +229,14 @@ sealed class WorkPage
     readonly TextBlock _status = Ui.Muted("");
     readonly TextBlock _unreadable = Ui.With(Ui.Muted(""), t => t.FontSize = Theme.Small);
     readonly TextBlock _slow = Ui.With(Ui.Muted(""), t => { t.FontSize = Theme.Small; t.Foreground = Theme.Caution; });
-    readonly StackPanel _mandates = new() { Spacing = Theme.S3 };
-    readonly StackPanel _deliveries = new() { Spacing = Theme.S3 };
-    readonly StackPanel _decisions = new() { Spacing = Theme.S3 };
+    readonly StackPanel _mandates = new();
+    readonly StackPanel _deliveries = new();
+    readonly StackPanel _decisions = new();
     readonly LiveList<MandateWords> _mandateList;
     readonly LiveList<DeliveryWords> _deliveryList;
     readonly LiveList<DecisionWords> _decisionList;
+    readonly TextBlock _openCount = Ui.FigureText(), _lateCount = Ui.FigureText(), _deliveryCount = Ui.FigureText(), _decisionCount = Ui.FigureText();
+    readonly Control _counts;
 
     public Control Root { get; }
 
@@ -233,10 +263,22 @@ sealed class WorkPage
         _deliveryList = new LiveList<DeliveryWords>(_deliveries, Ui.Muted(Labels.WorkNoDeliveries), d => d.Id, MakeDelivery);
         _decisionList = new LiveList<DecisionWords>(_decisions, Ui.Muted(Labels.WorkNoDecisions), d => d.Id, MakeDecision);
 
-        var body = Ui.Col(Theme.S6,
-            _status,
-            _unreadable,
-            _slow,
+        // FOUR COUNTS AT THE HEAD: how much is open, how much of it is late, what waits for judgement, and how much was decided this week.
+        var counts = new Grid { ColumnDefinitions = new ColumnDefinitions("*,*,*,*") };
+        var i = 0;
+        foreach (var (figure, what) in new[] { (_openCount, Ui.WorkOpenCount), (_lateCount, Ui.WorkLateCount),
+                     (_deliveryCount, Ui.WorkDeliveryCount), (_decisionCount, Ui.WorkDecisionCount) })
+        {
+            var cell = Ui.Figure(figure, what);
+            cell.Margin = new Avalonia.Thickness(0, 0, Theme.S4, 0);
+            cell[Grid.ColumnProperty] = i++;
+            counts.Children.Add(cell);
+        }
+        _counts = counts;
+        _counts.IsVisible = false;
+
+        var body = Ui.Col(Theme.S8,
+            Ui.Col(Theme.S3, _status, _unreadable, _counts, _slow),
             Ui.Col(Theme.S2, Ui.Eyebrow(Labels.WorkMandatesHeading), _mandates),
             Ui.Col(Theme.S2, Ui.Eyebrow(Labels.WorkDeliveriesHeading), _deliveries),
             Ui.Col(Theme.S2, Ui.Eyebrow(Labels.WorkDecisionsHeading), Ui.Micro(Labels.WorkForecastNote), _decisions));
@@ -279,12 +321,19 @@ sealed class WorkPage
         if (!read) return;   // the status above says nothing below is current
         OrgText.Set(_slow, words.Slow);
         _slow.IsVisible = words.Slow.Length > 0;
+        static string N(int n) => n.ToString(CultureInfo.InvariantCulture);
+        OrgText.Set(_openCount, N(words.Mandates.Count));
+        var late = words.Mandates.Count(m => m.Late);
+        OrgText.Set(_lateCount, N(late));
+        var lateTone = late > 0 ? Theme.Caution : Theme.Text;
+        if (!ReferenceEquals(_lateCount.Foreground, lateTone)) _lateCount.Foreground = lateTone;
+        OrgText.Set(_deliveryCount, N(words.Deliveries.Count));
+        OrgText.Set(_decisionCount, N(words.Decisions.Count));
+        _counts.IsVisible = true;
         _mandateList.Update(words.Mandates);
         _deliveryList.Update(words.Deliveries);
         _decisionList.Update(words.Decisions);
     }
-
-    static TextBlock Small() => Ui.With(Ui.Muted(""), t => t.FontSize = Theme.Small);
 
     /// <summary>The ids behind a header's names, on its hover — set only when they changed.</summary>
     static void Hover(Control c, string ids)
@@ -296,53 +345,92 @@ sealed class WorkPage
     /// <summary>An organisation's words on the page: the body size, in the text colour, and slanted — they are not the app's voice.</summary>
     static TextBlock Said() => Ui.With(Ui.Body(""), t => t.FontStyle = FontStyle.Italic);
 
+    static TextBlock Header() => Ui.With(Ui.Body(""), t => t.FontWeight = FontWeight.SemiBold);
+
+    /// <summary>Two things on one line: the first takes what room there is, the second sits at the end, as wide as it needs.</summary>
+    static Grid Ends(Control first, Control second, double gap)
+    {
+        second.Margin = new Avalonia.Thickness(gap, 0, 0, 0);
+        second[Grid.ColumnProperty] = 1;
+        return new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Children = { first, second } };
+    }
+
     static (Control Card, Action<MandateWords> Fill) MakeMandate(MandateWords first)
     {
-        var header = Ui.With(Ui.Body(""), t => t.FontWeight = FontWeight.SemiBold);
-        var status = Small();
-        var terms = Small();
+        var header = Header();
+        var left = Ui.SmallFigure();
+        var dot = new OrgStateDot();
+        var status = Ui.Quiet();
+        status.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center;
+        var time = new OrgTimeLine();
+        var terms = Ui.Quiet();
         var objective = Said();
-        var spend = Small();
-        var card = Ui.Card(Ui.Col(Theme.S2, header, status, terms, objective, spend));
+        var meter = new Meter { VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
+        var spent = Ui.SmallFigure(Theme.TextMuted);
+        var spend = Ui.With(Ui.Quiet(), t => t.Foreground = Theme.TextFaint);
+
+        var stateRow = Ui.Row(Theme.S2, dot, status);
+        var card = Ui.Card(Ui.Col(Theme.S2,
+            Ends(header, left, Theme.S4),
+            stateRow,
+            Ui.With(time, t => t.Margin = new Avalonia.Thickness(0, Theme.S1, 0, 0)),
+            terms,
+            Ui.With(objective, t => t.Margin = new Avalonia.Thickness(0, Theme.S2, 0, Theme.S2)),
+            Ends(meter, spent, Theme.S4),
+            spend));
         return (card, m =>
         {
             OrgText.Set(header, m.Header);
             Hover(header, m.Ids);
+            OrgText.Set(left, Ui.TimeLeft(m.Deadline, m.Now));
             OrgText.Set(status, m.Status);
             OrgText.Set(terms, m.Terms);
             // A MANDATE PAST ITS DEADLINE IS SAID IN CAUTION COLOUR, so a late one is seen at a glance among the open ones.
             var tone = m.Late ? Theme.Caution : Theme.TextMuted;
             if (!ReferenceEquals(terms.Foreground, tone)) terms.Foreground = tone;
+            var leftTone = m.Late ? Theme.Caution : Theme.Text;
+            if (!ReferenceEquals(left.Foreground, leftTone)) left.Foreground = leftTone;
+            dot.Set(true, m.Late ? Theme.Caution : Theme.Text);
+            time.Set(m.Issued, m.Deadline, m.Now);
             OrgText.Set(objective, m.Objective);
+            meter.Set(m.Spent is { } s ? (m.Allocation > 0m ? (double)(s / m.Allocation) : s > 0m ? 1d : 0d) : null);
+            OrgText.Set(spent, Ui.SpendOf(m.Spent, m.Allocation, m.Currency));
             OrgText.Set(spend, m.Spend);
         });
     }
 
     static (Control Card, Action<DeliveryWords> Fill) MakeDelivery(DeliveryWords first)
     {
-        var header = Ui.With(Ui.Body(""), t => t.FontWeight = FontWeight.SemiBold);
+        var header = Header();
         var report = Said();
         var deviations = Ui.With(Said(), t => t.FontSize = Theme.Small);
-        var checks = Small();
-        var card = Ui.Card(Ui.Col(Theme.S2, header, report, deviations, checks));
+        var marks = new OrgCheckMarks();
+        var checks = Ui.Quiet();
+        var card = Ui.Card(Ui.Col(Theme.S2, header, report, deviations,
+            Ui.With(Ui.Col(Theme.S2, marks, checks), c => c.Margin = new Avalonia.Thickness(0, Theme.S1, 0, 0))));
         return (card, d =>
         {
             OrgText.Set(header, d.Header);
             Hover(header, d.Ids);
             OrgText.Set(report, d.Report);
             OrgText.Set(deviations, d.Deviations);
+            marks.Set(d.Passed);
+            marks.IsVisible = d.Passed.Count > 0;
             OrgText.Set(checks, d.Checks);
         });
     }
 
+    /// <summary>A decision on the week's time line: a guide down the page, an elbow into each decision, newest first as the ledger lists them.</summary>
     static (Control Card, Action<DecisionWords> Fill) MakeDecision(DecisionWords first)
     {
-        var header = Ui.With(Ui.Body(""), t => t.FontWeight = FontWeight.SemiBold);
+        var header = Header();
         var choice = Said();
         var options = Ui.With(Said(), t => t.FontSize = Theme.Small);
         var rationale = Said();
-        var forecasts = Small();
-        var card = Ui.Card(Ui.Col(Theme.S2, header, choice, options, rationale, forecasts));
+        var forecasts = Ui.Quiet();
+        var column = Ui.Col(Theme.S2, header, choice, options, rationale, forecasts);
+        column.Margin = new Avalonia.Thickness(0, Theme.S3, 0, Theme.S4);
+        var card = new OrgTreeRow(column) { Depth = 1, ElbowAt = Theme.S3 + 11 };
         return (card, d =>
         {
             OrgText.Set(header, d.Header);
