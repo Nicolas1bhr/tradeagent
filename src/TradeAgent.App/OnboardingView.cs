@@ -36,10 +36,10 @@ public sealed class OnboardingView
     /// A reading measure, not a window width. Setup is prose; full-bleed paragraphs on a 760px
     /// window are what makes a wizard feel like a form to be endured.
     /// </summary>
-    const double ContentWidth = 620;
+    const double ContentWidth = Theme.SetupWidth;
 
     /// <summary>Keeps the footer at the bottom of a frame instead of tight under a short body.</summary>
-    const double FrameHeight = 430;
+    const double FrameHeight = Theme.SetupFrameHeight;
 
     readonly AppHost _host;
     readonly Action _rerender;
@@ -99,9 +99,27 @@ public sealed class OnboardingView
         var total = OnboardingSteps.Order.Length;
         var screen = Compose(step);
 
-        var head = Ui.Col(Theme.S6,
-            Ui.Col(Theme.S3, Ui.Eyebrow($"Step {here + 1} of {total}"), Rail(here, total)),
-            Ui.Col(Theme.S2, Ui.Display(step.Title()), Ui.Muted(screen.Lede)));
+        // THE BEGINNING OF SOMETHING (U-ui-world): a quiet line of how far it has come, then the step's title set large and light, then the
+        // one thing the screen asks, a size over the body.
+        var count = Ui.With(Ui.Micro($"Step {here + 1} of {total}"), t => { t.Margin = new Thickness(Theme.S4, 0, 0, 0); t.VerticalAlignment = VerticalAlignment.Center; });
+        count[Grid.ColumnProperty] = 1;
+        var progress = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Children = { Rail(here, total), count } };
+        var title = Ui.With(Ui.Hero(step.Title()), t =>
+        {
+            t.FontSize = Theme.SetupTitle;
+            t.LineHeight = Theme.SetupTitleLine;
+            t.LetterSpacing = Theme.SetupTitleTracking;
+        });
+        var lede = Ui.With(Ui.Muted(screen.Lede), t => { t.FontSize = Theme.SetupLede; t.LineHeight = Theme.SetupLedeLine; });
+        var head = Ui.Col(Theme.S10, progress, Ui.Col(Theme.S3, title, lede));
+        // THE WAY BACK SITS ABOVE THE LINE, where it is found on every screen and never squeezed by the presses beside it (a long step name
+        // beside two presses wrapped onto two lines at the foot).
+        if (!screen.HideBack && PreviousDecision() is { } back)
+            head.Children.Insert(0, Ui.With(Ui.Ghost($"← Back to “{back.Title()}”", GoBack), b =>
+            {
+                b.HorizontalAlignment = HorizontalAlignment.Left;
+                b.Margin = new Thickness(-Theme.S4, -Theme.S8, 0, -Theme.S8);
+            }));
 
         var body = Ui.Col(Theme.S5);
         body.Margin = new Thickness(0, Theme.S8, 0, Theme.S6);
@@ -123,9 +141,12 @@ public sealed class OnboardingView
             RowDefinitions = new RowDefinitions("Auto,*,Auto"),
             MaxWidth = ContentWidth,
             MinHeight = FrameHeight,
-            HorizontalAlignment = HorizontalAlignment.Center,
+            // Stretched to its measure and centred by it, so the column stands in the same place on every step rather than shifting with
+            // how wide each step's words happen to be.
+            HorizontalAlignment = HorizontalAlignment.Stretch,
             Margin = new Thickness(0, Theme.S10, 0, Theme.S4)
         };
+        frame.Styles.Add(Theme.SetupStyles());
         frame.Children.Add(head);
         body[Grid.RowProperty] = 1;
         frame.Children.Add(body);
@@ -136,43 +157,10 @@ public sealed class OnboardingView
     }
 
     /// <summary>
-    /// The step rail. Sixteen steps is a long way, and a 4px bar filling by seven percent tells a
-    /// worried user nothing; discrete marks say "there are this many, you are here".
+    /// The step rail, as a line (<see cref="OnboardingProgress"/>): sixteen steps is a long way, so it keeps a tick for each — "there are
+    /// this many, you are here" — with the steps done lit.
     /// </summary>
-    static Control Rail(int here, int total)
-    {
-        var columns = new ColumnDefinitions();
-        for (var i = 0; i < total; i++)
-        {
-            if (i > 0) columns.Add(new ColumnDefinition(GridLength.Star));
-            columns.Add(new ColumnDefinition(GridLength.Auto));
-        }
-
-        var rail = new Grid { ColumnDefinitions = columns, Height = 12 };
-        for (var i = 0; i < total; i++)
-        {
-            var column = i * 2;
-            if (i > 0)
-                rail.Children.Add(new Border
-                {
-                    Height = 2,
-                    Background = i <= here ? Theme.Accent : Theme.Line,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    [Grid.ColumnProperty] = column - 1
-                });
-
-            var size = i == here ? 11d : 7d;
-            rail.Children.Add(new Ellipse
-            {
-                Width = size,
-                Height = size,
-                Fill = i <= here ? Theme.Accent : Theme.Line,
-                VerticalAlignment = VerticalAlignment.Center,
-                [Grid.ColumnProperty] = column
-            });
-        }
-        return rail;
-    }
+    static Control Rail(int here, int total) => new OnboardingProgress(here, total);
 
     Control Footer(Screen screen)
     {
@@ -185,10 +173,8 @@ public sealed class OnboardingView
 
         // Every screen after the first needs a way out. Setup waits on conditions the user may not
         // be able to meet yet — ATAS not installed, the AI tool not signed in — and without this a
-        // wrong choice on an earlier screen is unrecoverable except by deleting the database.
-        if (!screen.HideBack && PreviousDecision() is { } back)
-            footer.Children.Add(Ui.With(Ui.Ghost($"← Back to “{back.Title()}”", GoBack),
-                b => b.HorizontalAlignment = HorizontalAlignment.Left));
+        // wrong choice on an earlier screen is unrecoverable except by deleting the database. The way
+        // back is drawn at the head of the frame (Build), above the progress line.
 
         right[Grid.ColumnProperty] = 1;
         footer.Children.Add(right);
@@ -201,16 +187,16 @@ public sealed class OnboardingView
     /// A note or a problem. A tinted left edge rather than a full border: it marks the paragraph
     /// without drawing a box around it, which is the difference between an aside and an alarm.
     /// </summary>
+    /// <para>On glass (<c>U-ui-world</c>) the tint is gone and the edge is a line of light: amber for a problem or a caution — the one colour
+    /// a note spends — and white at some strength for what is only said (green means profit and indigo the AI, on this product, never "good
+    /// to know").</para>
     static Control Note(string text, IBrush tone) => new Border
     {
-        Background = tone == Theme.Caution ? Theme.CautionSoft
-            : tone == Theme.Positive ? Theme.PositiveSoft
-            : tone == Theme.Danger ? Theme.DangerSoft
-            : Theme.AccentSoft,
-        BorderBrush = tone,
+        BorderBrush = tone == Theme.Caution || tone == Theme.Danger ? tone
+            : tone == Theme.Positive ? Theme.Text
+            : Theme.LineStrong,
         BorderThickness = new Thickness(2, 0, 0, 0),
-        CornerRadius = Theme.RadiusSm,
-        Padding = new Thickness(Theme.S4, Theme.S3),
+        Padding = new Thickness(Theme.S4, Theme.S1, 0, Theme.S1),
         Child = Ui.Body(text)
     };
 
@@ -223,12 +209,14 @@ public sealed class OnboardingView
         var heading = Ui.Row(Theme.S3, Ui.H2(title));
         if (badge is not null) heading.Children.Add(badge);
 
+        // A ROW ON GLASS (U-ui-world): the whole width of the column, a hairline above, the pane's light under the pointer; a quiet mark at
+        // its end says it is a thing to choose.
+        var mark = Ui.With(Ui.Muted("→"), t => { t.VerticalAlignment = VerticalAlignment.Center; t.Margin = new Thickness(Theme.S4, 0, 0, 0); });
+        mark[Grid.ColumnProperty] = 1;
         var card = new Button
         {
-            Classes = { "secondary" },
-            Content = Ui.Col(Theme.S1, heading, detail),
-            Padding = new Thickness(Theme.S4, Theme.S4),
-            CornerRadius = Theme.Radius,
+            Classes = { "choice-row" },
+            Content = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Children = { Ui.Col(Theme.S1, heading, detail), mark } },
             HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Stretch
         };
@@ -248,22 +236,19 @@ public sealed class OnboardingView
     /// </summary>
     static Control Numbered(int n, string title, string? detail = null)
     {
-        var badge = new Border
+        // The number set light and large in the margin, not a badge: the place in a list someone is following, never a kicker.
+        var badge = new TextBlock
         {
-            Width = 24,
-            Height = 24,
-            CornerRadius = Theme.Pill,
-            Background = Theme.AccentSoft,
+            Text = n.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            FontSize = Theme.H1,
+            LineHeight = Theme.H1Line,
+            FontWeight = FontWeight.Light,
+            FontFamily = Theme.SansDisplay,
+            FontFeatures = Theme.Tabular,
+            Foreground = Theme.TextFaint,
+            Width = Theme.S6,
             VerticalAlignment = VerticalAlignment.Top,
-            Child = new TextBlock
-            {
-                Text = n.ToString(),
-                FontSize = Theme.Micro,
-                FontWeight = FontWeight.SemiBold,
-                Foreground = Theme.Accent,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            }
+            Margin = new Thickness(0, -4, 0, 0)
         };
 
         var text = Ui.Col(2, Ui.Body(title));
@@ -602,7 +587,7 @@ public sealed class OnboardingView
         {
             var manifest = m;
             cards.Children.Add(Choice(manifest.DisplayName, Ui.Muted(manifest.Description),
-                manifest.Recommended ? Ui.Pill("RECOMMENDED", Theme.Positive) : null,
+                manifest.Recommended ? Ui.Pill("RECOMMENDED", Theme.Text) : null,
                 Act(() =>
                 {
                     _host.Gateway.Update(s => s.SelectedRuntimeId = manifest.Id);
@@ -856,7 +841,7 @@ public sealed class OnboardingView
 
     /// <summary>A device code, sized to be read off the screen and typed into a phone.</summary>
     internal static Control CodeWell(string code) => Ui.Col(Theme.S2,
-        Ui.Eyebrow("Enter this code on the sign-in page"),
+        Ui.Muted("Enter this code on the sign-in page"),
         new Border
         {
             Background = Theme.BgSunken,
@@ -889,11 +874,12 @@ public sealed class OnboardingView
             Background = Theme.BgSunken,
             CornerRadius = Theme.RadiusSm,
             Padding = new Thickness(Theme.S4, Theme.S3),
-            Child = Ui.With(Ui.Mono(url), t => t.TextWrapping = TextWrapping.Wrap)
+            // THE ADDRESS, LARGE (U-ui-world): read off this screen and typed into a phone, so it is set to be read, not glanced at.
+            Child = Ui.With(Ui.Mono(url), t => { t.TextWrapping = TextWrapping.Wrap; t.FontSize = Theme.SignInAddress; })
         };
 
         var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Children = { well, copy } };
-        return Ui.Col(Theme.S2, Ui.Eyebrow(elsewhere
+        return Ui.Col(Theme.S2, Ui.Muted(elsewhere
             ? "On your phone or another computer, open this address"
             : "If your browser did not open, go to this address"), row);
     }
@@ -906,7 +892,7 @@ public sealed class OnboardingView
     Screen ChoosePlatform()
     {
         Button Platform(string title, string detail, bool recommended, string id) =>
-            Choice(title, Ui.Muted(detail), recommended ? Ui.Pill("RECOMMENDED", Theme.Positive) : null, Act(async () =>
+            Choice(title, Ui.Muted(detail), recommended ? Ui.Pill("RECOMMENDED", Theme.Text) : null, Act(async () =>
             {
                 await _host.SwitchConnectorAsync(id);
                 Done(OnboardingStep.TRADING_PLATFORM_SELECTED);
@@ -1094,7 +1080,7 @@ public sealed class OnboardingView
             // This is the screen where someone picks a live account by accident, so the two kinds
             // never look alike: the pill is the loudest thing on the card.
             var badge = account.IsSimulated
-                ? Ui.Pill("SIMULATION", Theme.Info)
+                ? Ui.Pill("SIMULATION", Theme.TextMuted)
                 : Ui.Pill("REAL MONEY", Theme.Danger);
 
             var detail = Ui.Row(Theme.S3,

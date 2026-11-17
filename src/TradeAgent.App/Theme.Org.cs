@@ -1,3 +1,9 @@
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Media;
+using Avalonia.Styling;
+
 namespace TradeAgent.App;
 
 /// <summary>
@@ -33,4 +39,39 @@ static partial class Theme
 
     /// <summary>A sign-in address set large enough to read off the screen and type on a phone.</summary>
     public const double SignInAddress = 17;
+
+    /// <summary>The sentence under a setup step's title: a size over the body, so the one question a screen asks reads first.</summary>
+    public const double SetupLede = 15, SetupLedeLine = 24;
+
+    /// <summary>The reading measure of the setup column, and the least height of its frame (so the footer sits low under a short body).</summary>
+    public const double SetupWidth = 640, SetupFrameHeight = 460;
+
+    /// <summary>
+    /// THE SETUP'S CHOICES AS ROWS ON GLASS (<c>U-ui-world</c>): a press across the column's whole width with a hairline above it and no box —
+    /// the pane's light lifts the row under the pointer. The styles are the setup frame's own (the frame is rebuilt on every render, so each
+    /// build hands it a fresh set); they change how a choice looks, never what it does.
+    /// </summary>
+    public static Styles SetupStyles()
+    {
+        var styles = new Styles
+        {
+            new Style(x => x.OfType<Button>().Class("choice-row"))
+            {
+                Setters =
+                {
+                    S(TemplatedControl.BackgroundProperty, Brushes.Transparent),
+                    S(TemplatedControl.BorderBrushProperty, Line),
+                    S(TemplatedControl.BorderThicknessProperty, new Thickness(0, 1, 0, 0)),
+                    S(TemplatedControl.CornerRadiusProperty, new CornerRadius(0)),
+                    S(TemplatedControl.PaddingProperty, new Thickness(S3, S5)),
+                    S(TemplatedControl.ForegroundProperty, Text),
+                    S(TemplatedControl.FontWeightProperty, FontWeight.Normal)
+                }
+            }
+        };
+        Fill(styles, x => x.OfType<Button>().Class("choice-row").Class(":pointerover"), GlassHover);
+        Fill(styles, x => x.OfType<Button>().Class("choice-row").Class(":pressed"), GlassActive);
+        Fill(styles, x => x.OfType<Button>().Class("choice-row").Class(":disabled"), Brushes.Transparent);
+        return styles;
+    }
 }
