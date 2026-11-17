@@ -32,6 +32,23 @@ sealed class FloorStage : Control
     public Func<Size, (float L, float T, float R, float B)> Clear { get; set; } =
         size => (32, 32, (float)size.Width - 32, (float)size.Height - 32);
 
+    /// <summary>The panes of glass the window lays over the stage this instant (<see cref="FloorFrame.Pane"/>): asked for every frame.</summary>
+    public Func<FloorFrame.Pane[]>? Glass { get; set; }
+
+    Vector2? _pointerOnGlass;
+
+    /// <summary>
+    /// The pointer moved over the window's glass (stage coordinates), or left it (null): the pane under it is lit a little round it.
+    /// Only where the frames are free — on a machine that draws without a graphics card the glass is not lit, and nothing is redrawn.
+    /// </summary>
+    public void PointerOnGlass(Vector2? at)
+    {
+        if (Scene.Motion != FloorMotion.Full) at = null;
+        if (at == _pointerOnGlass) return;
+        _pointerOnGlass = at;
+        Wake();
+    }
+
     /// <summary>The word beside the owner's place.</summary>
     public string OwnerWord { get; set; } = "";
 
@@ -72,6 +89,17 @@ sealed class FloorStage : Control
     long _paintTicks;
     int _painted;
     bool _measured;
+
+    /// <summary>
+    /// The floor is behind a sheet: something is being read in front of it. It moves at half its pace and breathes slowly — it is
+    /// still alive, and it is not what the frames are for.
+    /// </summary>
+    public bool Behind { get; set; }
+
+    /// <summary>The least time between two frames: a sixtieth of a second, or a thirtieth behind a sheet.</summary>
+    TimeSpan Pace => Behind ? TimeSpan.FromMilliseconds(32) : TimeSpan.FromMilliseconds(15.5);
+
+    static readonly TimeSpan BehindBreath = TimeSpan.FromMilliseconds(100);
 
     static readonly TimeSpan Breath = TimeSpan.FromMilliseconds(40), CalmBreath = TimeSpan.FromMilliseconds(125), CalmStep = TimeSpan.FromMilliseconds(66);
 
@@ -150,12 +178,17 @@ sealed class FloorStage : Control
         Scene.Advance(dt);
 
         var breath = Scene.Motion == FloorMotion.Full ? Breath : CalmBreath;
-        var due = _dirty || (Scene.Busy && Scene.Motion != FloorMotion.Still)
-                  || (Scene.Breathing && Scene.Motion != FloorMotion.Still && Stopwatch.GetElapsedTime(_lastFrame, now) >= breath);
+        // NEVER FASTER THAN THE EYE NEEDS: a screen that refreshes 120 times a second asks for 120 frames, and the floor's motion is
+        // slow — sixty is all of it, and behind a sheet, where it is the background to something being read, thirty.
+        var since = Stopwatch.GetElapsedTime(_lastFrame, now);
+        var due = (_dirty && since >= Pace) || (Scene.Busy && Scene.Motion != FloorMotion.Still && since >= Pace)
+                  || (Scene.Breathing && Scene.Motion != FloorMotion.Still && since >= (Behind ? BehindBreath : breath));
         if (due) Draw(now);
 
         // Every frame while something is on its way; a slow frame while the floor only breathes; nothing while nothing moves. A calm
         // floor — a machine that draws without a graphics card — moves what is on its way at a pace it can afford, never every frame.
+        // A frame asked for sooner than the pace allows is drawn at the next beat, never dropped.
+        if (_dirty) { Pump(); return; }
         if (Scene.Motion == FloorMotion.Still) { _lastTick = 0; return; }
         if (Scene.Busy && Scene.Motion == FloorMotion.Full) Pump();
         else if (Scene.Busy) DispatcherTimer.RunOnce(Pump, CalmStep, DispatcherPriority.Background);
@@ -170,6 +203,8 @@ sealed class FloorStage : Control
         var size = Bounds.Size;
         if (size.Width < 4 || size.Height < 4) return;
         _frame = Scene.Frame((float)size.Width, (float)size.Height, Clear(size), OwnerWord);
+        if (Glass is { } glass) _frame.Glass = glass();
+        _frame.Pointer = _pointerOnGlass;
         Frames++;
         Framed?.Invoke(_frame);
         InvalidateVisual();

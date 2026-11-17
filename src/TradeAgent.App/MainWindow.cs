@@ -6,10 +6,12 @@ using Avalonia.Animation;
 using Avalonia.Animation.Easings;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Shapes;
+using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using TradeAgent.Core;
 using TradeAgent.Gateway;
 using TradeAgent.Provisioning;
@@ -27,92 +29,29 @@ using IconPath = Avalonia.Controls.Shapes.Path;
 namespace TradeAgent.App;
 
 /// <summary>
-/// The application shell: a fixed header, a left rail, and one visible page.
+/// The application shell (<c>U-ui-world</c>): <b>one picture, and no list of pages</b>. The floor — the organisation drawn as a place,
+/// lit where it is working — is the window itself, always there. Everything else is laid over it as glass: what state the app is in and
+/// the stop, top right; the six places of the app in a dock at its foot (<see cref="Places"/>); and, when the owner goes somewhere, a
+/// sheet with that place's page while the camera goes to the thing the page is about.
 ///
-/// Two structural rules govern this file, and both exist because of defects that were real.
+/// Three structural rules govern this file, and each exists because of defects that were real.
 ///
 ///   1. <b>Nothing here opens a console.</b> Talking to the AI happens in <see cref="ChatView"/>,
 ///      inside this window. The only processes this file starts are a folder, a URL or ATAS itself,
 ///      through the Windows shell — never a command prompt, and never the agent CLI.
 ///
 ///   2. <b>The tree is built once.</b> Pages are created in <see cref="EnsureShell"/> and swapped by
-///      toggling <c>IsVisible</c>. The background loop raises a change event every five seconds, so
+///      toggling <c>IsVisible</c> inside the sheet. The background loop raises a change event every five seconds, so
 ///      rebuilding on every refresh made diagnostics output vanish mid-read, reset the scroll
 ///      position, and silently disarmed a half-pressed two-step confirmation. Rebuilding a tree is
 ///      not a refresh.
+///
+///   3. <b>The stop is on screen whatever the owner is looking at</b>, and so is what outranks every page: an earlier armed home's
+///      refusal, his private line's severe finding, a press that failed. A stop that is one move away is not a stop.
 /// </summary>
 public sealed class MainWindow : Window
 {
     internal enum Page { Floor, Chat, Organisation, Work, Costs, Dashboard, Board, Report, Inbox, Owner, ForYou, Settings, Activity, Checks, Oversight }
-
-    /// <summary>
-    /// THE RAIL, IN ORDER (<c>U-settings-shed</c>; R24 § 4.7), as data so a test reads the order the window builds:
-    /// <list type="bullet">
-    /// <item>The Board straight after the Dashboard: the decisions in force beside the live picture they govern.</item>
-    /// <item>The daily report after them, because it answers the Dashboard's question over a longer window.</item>
-    /// <item>The owner's page where Safety was: what stays his — the emergency family, his connections, his money, evidence, updates.</item>
-    /// <item>"For you" straight after it (<c>U-org-surface-b</c>): what reached him — escalations at the root, his words owed, the
-    /// board's power proposals — and his vetoes, beside the page of what stays his.</item>
-    /// <item>Settings — the market data — then the diagnostic tail.</item>
-    /// <item>Oversight last: the owner's word for his private line, his alone and never shown to an agent (U-org-watcher-b).</item>
-    /// </list>
-    /// <c>U-org-surface-a</c> put the organisation first: Organisation, Work and Costs follow Chat (R24 § 4.7).
-    /// <c>U-ui-alive</c> put the floor before them all: the organisation drawn as a place, lit where it is working, is what the app opens on.
-    /// </summary>
-    internal static readonly IReadOnlyList<(Page Page, string Label)> Rail =
-    [
-        (Page.Floor, Labels.NavFloor),
-        (Page.Chat, "Chat"),
-        (Page.Organisation, Labels.NavOrganisation),
-        (Page.Work, Labels.NavWork),
-        (Page.Costs, Labels.NavCosts),
-        (Page.Dashboard, "Dashboard"),
-        (Page.Board, Labels.BoardPage),
-        (Page.Report, "Daily report"),
-        (Page.Inbox, "Inbox"),
-        (Page.Owner, Labels.OwnerPage),
-        (Page.ForYou, Labels.NavForYou),
-        (Page.Settings, "Settings"),
-        (Page.Activity, "Activity"),
-        (Page.Checks, "Checks"),
-        (Page.Oversight, "Oversight")
-    ];
-
-    /// <summary>
-    /// THE RAIL'S GROUPS (<c>U-ui-alive</c>): the same pages in the same order as <see cref="Rail"/> — a test holds the two together — under
-    /// the few words that say whose they are. Fourteen names in one column read as a list to be searched; five short groups read as a place.
-    /// The first group needs no name, and the last is the owner's private line, alone under its own.
-    /// </summary>
-    internal static readonly IReadOnlyList<(string? Title, IReadOnlyList<Page> Pages)> RailGroups =
-    [
-        (null, [Page.Floor, Page.Chat]),
-        (Labels.RailOrganisation, [Page.Organisation, Page.Work, Page.Costs]),
-        (Labels.RailTrading, [Page.Dashboard, Page.Board, Page.Report]),
-        (Labels.RailYours, [Page.Inbox, Page.Owner, Page.ForYou]),
-        (Labels.RailSystem, [Page.Settings, Page.Activity, Page.Checks]),
-        (Labels.RailPrivate, [Page.Oversight])
-    ];
-
-    /// <summary>Each page's drawing in the rail (<see cref="Icons"/>).</summary>
-    internal static string RailIcon(Page page) => page switch
-    {
-        Page.Floor => Icons.Floor,
-        Page.Chat => Icons.Chat,
-        Page.Organisation => Icons.Organisation,
-        Page.Work => Icons.Work,
-        Page.Costs => Icons.Costs,
-        Page.Dashboard => Icons.Dashboard,
-        Page.Board => Icons.Board,
-        Page.Report => Icons.Report,
-        Page.Inbox => Icons.Inbox,
-        Page.Owner => Icons.Owner,
-        Page.ForYou => Icons.ForYou,
-        Page.Settings => Icons.Settings,
-        Page.Activity => Icons.Activity,
-        Page.Checks => Icons.Checks,
-        Page.Oversight => Icons.Oversight,
-        _ => Icons.Checks
-    };
 
     readonly AppHost _host;
 
@@ -125,12 +64,14 @@ public sealed class MainWindow : Window
     OnboardingView? _wizard;
 
     // ---- shell -----------------------------------------------------------------------------
+    // One cell under four rows: the floor fills all of it, and the rows lay the window's glass over it — what state the app is in,
+    // what outranks every page, the sheet, and the dock.
     readonly Grid _shellSurface = new()
     {
-        RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,*"), IsVisible = false
+        RowDefinitions = new RowDefinitions("Auto,Auto,*,Auto"), IsVisible = false
     };
 
-    // header
+    // what state the app is in, top right
     readonly ContentControl _modePillHost = new() { VerticalAlignment = VerticalAlignment.Center };
     readonly TextBlock _metaPlatform = Meta("");
     readonly TextBlock _metaAccount = MetaMono("");
@@ -140,14 +81,16 @@ public sealed class MainWindow : Window
         Width = 7, Height = 7, Fill = Tokens.Neutral, VerticalAlignment = VerticalAlignment.Center
     };
     Button? _stopButton;
+    readonly Ellipse _stopLight = new() { Width = 7, Height = 7, Fill = Tokens.Danger, Margin = new Thickness(Tokens.S1, 0, 0, 0) };
     string _modeSignature = "";
 
     // banners
     readonly Border _errorBar = new()
     {
-        Background = Tokens.DangerSoft,
+        Background = Tokens.NoticeDanger,
         BorderBrush = Tokens.Danger,
-        BorderThickness = new Thickness(0, 0, 0, 1),
+        BorderThickness = new Thickness(1),
+        CornerRadius = Tokens.Radius,
         Padding = new Thickness(Tokens.S5, Tokens.S3),
         IsVisible = false
     };
@@ -158,9 +101,10 @@ public sealed class MainWindow : Window
     };
     readonly Border _updateBanner = new()
     {
-        Background = Tokens.AccentSoft,
+        Background = Tokens.NoticeInfo,
         BorderBrush = Tokens.Accent,
-        BorderThickness = new Thickness(0, 0, 0, 1),
+        BorderThickness = new Thickness(1),
+        CornerRadius = Tokens.Radius,
         Padding = new Thickness(Tokens.S5, Tokens.S3),
         IsVisible = false
     };
@@ -173,24 +117,14 @@ public sealed class MainWindow : Window
     Button? _updateInstall;
     Button? _updateLater;
 
-    // rail
-    readonly StackPanel _navStack = new() { Spacing = 1 };
-    readonly Dictionary<Page, Button> _nav = new();
-    /// <summary>Each rail entry's drawing, kept so the page being shown can have its line in the accent (see <see cref="Select"/>).</summary>
-    readonly Dictionary<Page, IconPath> _navIcons = new();
-    readonly Ellipse _healthDot = new()
-    {
-        Width = 7, Height = 7, Fill = Tokens.Neutral, VerticalAlignment = VerticalAlignment.Center
-    };
-    readonly TextBlock _healthSummary = new()
-    {
-        FontSize = Tokens.Small, Foreground = Tokens.TextMuted, TextWrapping = TextWrapping.Wrap
-    };
+    // the dock, the sheet and the search
+    Dock? _dock;
+    Sheet? _sheet;
+    Finder? _finder;
+    Border? _status;
+    readonly StackPanel _notices = new() { Spacing = Tokens.S2, HorizontalAlignment = HorizontalAlignment.Center, MaxWidth = Tokens.NoticeMaxWidth };
 
     // pages
-    readonly Grid _pageHost = new();
-    /// <summary>The frame round the page host: padded for a page of words, edge to edge for the floor (see <see cref="Select"/>).</summary>
-    readonly Border _pageFrame = new();
     readonly Dictionary<Page, Control> _pages = new();
     FloorPage? _floor;
     ChatView? _chat;
@@ -231,8 +165,35 @@ public sealed class MainWindow : Window
 
         _setupSurface = SetupSurface(_setupSlot);
 
-        Content = new Grid { Children = { _setupSurface, _shellSurface } };
+        // Behind the setup pane: a pool of faint light, the one the floor will stand in.
+        Content = new Grid { Children = { new Border { Background = Tokens.SetupGlow, IsHitTestVisible = false }, _setupSurface, _shellSurface } };
     }
+
+    // ---- for a host that drives the window itself (the render rows) ---------------------------------
+
+    /// <summary>
+    /// Set by a host that drives the window itself: the floor then keeps no timer and reads on no other thread (<see cref="FloorPage.Manual"/>),
+    /// so what the window shows is exactly what that host last asked of it.
+    /// </summary>
+    internal bool Stepped { get; init; }
+
+    /// <summary>The shell over a status, as the first tick after setup builds and fills it: for a host that has no running app behind the window.</summary>
+    internal void Compose(GatewayStatus status)
+    {
+        EnsureShell();
+        UpdateShell(status);
+    }
+
+    /// <summary>Goes to a page, as a press in the dock does.</summary>
+    internal void Go(Page page) => Select(page);
+
+    internal Page Shown => _shown;
+    internal Sheet? PageSheet => _sheet;
+    internal Dock? PlaceDock => _dock;
+    internal Finder? Find => _finder;
+    internal FloorPage? Floor => _floor;
+    internal Button? Stop => _stopButton;
+    internal Control? PageRoot(Page page) => _pages.GetValueOrDefault(page);
 
     // ---- lifecycle -----------------------------------------------------------------------------
 
@@ -312,7 +273,19 @@ public sealed class MainWindow : Window
     /// <summary>The setup surface: <paramref name="slot"/>, padded, in a scroll viewer.</summary>
     internal static ScrollViewer SetupSurface(Control slot) => new()
     {
-        Content = new Border { Padding = new Thickness(Tokens.S8, Tokens.S10), Child = slot }
+        // ONE PANE, ALONE IN THE WINDOW (U-ui-world): before there is an organisation there is no floor to stand behind it, so the
+        // pane is the window's own dark, lifted, with glass's rim — the same thing the owner will read every page on once he is in.
+        Content = new Border
+        {
+            Padding = new Thickness(Tokens.S8, Tokens.S10),
+            Child = new Border
+            {
+                MaxWidth = Tokens.SetupMaxWidth, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Top,
+                Background = Tokens.Solid, BorderBrush = Tokens.PaneRim, BorderThickness = new Thickness(1),
+                CornerRadius = Tokens.RadiusSheet, Padding = new Thickness(Tokens.S10, Tokens.S10, Tokens.S10, Tokens.S8),
+                Child = slot
+            }
+        }
     };
 
     /// <summary>
@@ -321,7 +294,7 @@ public sealed class MainWindow : Window
     /// </summary>
     internal static Control OlderHomeScreen(string message, string? problem, string confirmLabel, Func<Task> startFresh) =>
         Ui.Col(Tokens.S4,
-            Ui.H1("This TradeAgent does not open your older folder"),
+            Ui.Title("This TradeAgent does not open your older folder"),
             Ui.Body(message),
             Ui.With(Ui.Body(problem ?? ""), t => { t.Foreground = Tokens.Caution; t.IsVisible = problem is not null; }),
             Ui.Confirm("Start fresh", confirmLabel, startFresh));
@@ -345,7 +318,7 @@ public sealed class MainWindow : Window
     /// <summary>The no-ATAS screen, its press in the column for the same reason as <see cref="OlderHomeScreen"/>'s.</summary>
     internal static Control AtasNotInThisBuildScreen(string message, bool setupFinished, Func<Task> runOnPaper) =>
         Ui.Col(Tokens.S4,
-            Ui.H1("This TradeAgent has no ATAS"),
+            Ui.Title("This TradeAgent has no ATAS"),
             Ui.Body(message),
             Ui.Body(setupFinished
                 ? "You can run this TradeAgent on its own paper venue instead: real prices, simulated fills, no money. Your ATAS choice "
@@ -358,7 +331,7 @@ public sealed class MainWindow : Window
     void ShowFatal(string message)
     {
         _setupSlot.Content = Ui.Col(Tokens.S4,
-            Ui.H1("TradeAgent cannot start"),
+            Ui.Title("TradeAgent cannot start"),
             Ui.Body(message),
             Ui.Muted("If this keeps happening, open TradeAgent again and use Create support package on the Checks page."));
         _setupSurface.IsVisible = true;
@@ -391,70 +364,144 @@ public sealed class MainWindow : Window
         _shellBuilt = true;
         _wizard = null;
 
-        _shellSurface.Children.Add(Ui.With(BuildHeader(), c => c[Grid.RowProperty] = 0));
-        // Row 1, first under the header and above every page: an earlier armed home's refusal and its one press (fix pass 1, Codex P2).
-        // While it stands every order is refused, so it outranks the strips below it, and it is on screen whatever page is selected —
-        // including Chat, where the app opens.
-        _shellSurface.Children.Add(Ui.With(BuildEarlierArmedStrip(), c => c[Grid.RowProperty] = 1));
-        // The owner's severe finding straight after the approval banner: money first, then his private line (U-org-watcher-b).
-        _shellSurface.Children.Add(Ui.With(BuildOversightBanner(), c => c[Grid.RowProperty] = 2));
-        _shellSurface.Children.Add(Ui.With(BuildErrorBar(), c => c[Grid.RowProperty] = 3));
-        // Last of the strips on purpose. A waiting approval is money; a failed press is a
-        // broken button; a new version is neither, and must never sit above either of them.
-        _shellSurface.Children.Add(Ui.With(BuildUpdateBanner(), c => c[Grid.RowProperty] = 4));
-
         BuildPages();
 
-        var body = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions($"{Tokens.RailWidth.ToString(System.Globalization.CultureInfo.InvariantCulture)},*"),
-            [Grid.RowProperty] = 5
-        };
-        body.Children.Add(BuildRail());
-        _pageFrame.Child = _pageHost;
-        _pageFrame[Grid.ColumnProperty] = 1;
-        body.Children.Add(_pageFrame);
-        _shellSurface.Children.Add(body);
+        // THE FLOOR IS THE WINDOW (U-ui-world): it lies under every row, and everything else is glass laid over it.
+        var floor = _floor!;
+        floor.Root[Grid.RowSpanProperty] = 4;
+        _shellSurface.Children.Add(floor.Root);
 
-        // THE FLOOR IS THE LANDING PAGE (U-ui-alive). It is the organisation itself, lit where it is working — the answer to "what is it
+        _shellSurface.Children.Add(Ui.With(BuildStatus(), c => c[Grid.RowProperty] = 0));
+
+        // WHAT OUTRANKS EVERY PAGE, in a column of its own above the sheet and on screen whatever is selected. First: an earlier armed
+        // home's refusal and its one press (fix pass 1, Codex P2) — while it stands every order is refused, so it outranks the rest.
+        _notices.Children.Add(BuildEarlierArmedStrip());
+        // The owner's severe finding straight after it: money first, then his private line (U-org-watcher-b).
+        _notices.Children.Add(BuildOversightBanner());
+        _notices.Children.Add(BuildErrorBar());
+        // Last of the strips on purpose. A waiting approval is money; a failed press is a
+        // broken button; a new version is neither, and must never sit above either of them.
+        _notices.Children.Add(BuildUpdateBanner());
+        _shellSurface.Children.Add(Ui.With(_notices, c => c[Grid.RowProperty] = 1));
+
+        _shellSurface.Children.Add(Ui.With(_sheet!.Root, c => c[Grid.RowProperty] = 2));
+
+        _dock = new Dock(Select, () => _finder?.Show());
+        _shellSurface.Children.Add(Ui.With(_dock.Root, c => c[Grid.RowProperty] = 3));
+
+        _finder = new Finder(() => _pages.Select(p => (p.Key, p.Value)), Select);
+        _finder.Root[Grid.RowSpanProperty] = 4;
+        _shellSurface.Children.Add(_finder.Root);
+
+        // THE GLASS IS THE STAGE'S TO DRAW: wherever a part of the window lies over the floor, the floor paints itself out of focus
+        // behind it. Asked for on every frame, so a sheet half-way in is glass half-way in.
+        var stage = floor.Stage;
+        stage.Glass = () =>
+        {
+            var panes = new List<FloorFrame.Pane>(4);
+            if (_sheet.Pane(stage) is { } sheet) panes.Add(sheet);
+            if (_status is not null && Shell.PaneOf(_status, stage, (float)(_status.Bounds.Height / 2)) is { } status) panes.Add(status);
+            if (_dock.Pane(stage) is { } dock) panes.Add(dock);
+            if (_finder.Pane(stage) is { } finder) panes.Add(finder);
+            return [.. panes];
+        };
+        _sheet.Moved += stage.Wake;
+        stage.Failed += _ => Opaque();
+        _shellSurface.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == BoundsProperty) Lay();
+        };
+        _notices.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == BoundsProperty) Lay();
+        };
+        _finder.Root.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == IsVisibleProperty) stage.Wake();
+        };
+        KeyDown += OnKey;
+        // A closed window's floor reads nothing and draws nothing more.
+        Closed += (_, _) => floor.Shown(false);
+        // THE GLASS IS LIT A LITTLE WHERE THE POINTER IS: the window says where the pointer is, and the stage draws the light. Heard
+        // as the event goes down to whatever is under the pointer, and never handled: no press is taken from anything.
+        AddHandler(PointerMovedEvent, (_, e) =>
+        {
+            var at = e.GetPosition(stage);
+            var onGlass = e.Source is Visual v && !ReferenceEquals(v, stage) && v.GetVisualAncestors().Prepend(v).Any(a => ReferenceEquals(a, _sheet.Root) || ReferenceEquals(a, _dock.Root) || ReferenceEquals(a, _status));
+            stage.PointerOnGlass(onGlass ? new System.Numerics.Vector2((float)at.X, (float)at.Y) : null);
+        }, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        PointerExited += (_, _) => stage.PointerOnGlass(null);
+
+        // THE APP OPENS ON THE FLOOR ITSELF (U-ui-alive): the organisation, lit where it is working — the answer to "what is it
         // doing?" before anything is pressed — and when no AI is running it carries the same "Start the AI" the Chat page does, so the
-        // app still opens on a designed answer to "so how do I start?". Mode, platform, account and AI state all live in the chrome,
-        // which is on screen whatever page is selected.
+        // app still opens on a designed answer to "so how do I start?".
         Select(Page.Floor);
+        floor.Shown(true);
+        // FOR LOOKING AT ONE PAGE IN A WINDOW THAT CANNOT BE DRIVEN (a developer's screenshot): the page named is shown once the
+        // window is up. It presses nothing and is read once; unset or misspelt, the app opens on the floor as it always does.
+        if (Enum.TryParse<Page>(Environment.GetEnvironmentVariable("TA_UI_PAGE"), ignoreCase: true, out var asked))
+            Dispatcher.UIThread.Post(() => Select(asked), DispatcherPriority.Background);
     }
 
-    Control BuildHeader()
+    /// <summary>
+    /// The window's size, or what lies over the floor, changed: the sheet takes its share of the width, and the floor is told how
+    /// much of each side is taken, so the organisation stands in what is left.
+    /// </summary>
+    void Lay()
     {
-        // The mark and the name. The mark is one cell with its top lit: the thing the floor is made of.
-        var brand = Ui.Row(Tokens.S2,
-            Icons.Mark(),
-            new TextBlock
-            {
-                Text = "TradeAgent", FontSize = Tokens.H2, FontFamily = Tokens.SansDisplay,
-                FontWeight = FontWeight.SemiBold, Foreground = Tokens.Text, LetterSpacing = Tokens.H2Tracking,
-                VerticalAlignment = VerticalAlignment.Center
-            });
-        brand.VerticalAlignment = VerticalAlignment.Center;
+        if (_sheet is null || _floor is null || _dock is null) return;
+        var width = _shellSurface.Bounds.Width;
+        if (width <= 0) return;
+        _sheet.Root.Width = Sheet.WidthIn(width);
+        _dock.Compact(width < Tokens.DockWordsFrom);
+        var top = (_status?.Bounds.Height ?? 0) + Tokens.S3 + _notices.Bounds.Height;
+        var bottom = _dock.Root.Bounds.Height + Tokens.S3;
+        _floor.Reserve(top, _sheet.Open ? _sheet.Root.Width + Tokens.SheetGap : 0, bottom);
+    }
 
+    /// <summary>The floor cannot be drawn, so nothing is drawn behind the glass: the glass is given the window's own dark to be read on.</summary>
+    void Opaque()
+    {
+        if (_sheet is not null) _sheet.Root.Background = Tokens.Solid;
+        if (_dock is not null) _dock.Root.Background = Tokens.Solid;
+        if (_status is not null) _status.Background = Tokens.Solid;
+    }
+
+    void OnKey(object? sender, KeyEventArgs e)
+    {
+        if (!_shellSurface.IsVisible) return;
+        if (e.Key == Key.K && (e.KeyModifiers.HasFlag(KeyModifiers.Meta) || e.KeyModifiers.HasFlag(KeyModifiers.Control)))
+        {
+            if (_finder is { Open: true }) _finder.Close();
+            else _finder?.Show();
+            e.Handled = true;
+            return;
+        }
+        // CTRL (OR ⌘) AND A FIGURE GOES TO A PLACE, in the dock's order: 1 the floor … 6 the machine.
+        if ((e.KeyModifiers.HasFlag(KeyModifiers.Meta) || e.KeyModifiers.HasFlag(KeyModifiers.Control)) && e.Key is >= Key.D1 and <= Key.D6
+            && e.Key - Key.D1 is var nth && nth < Places.All.Count)
+        {
+            Select(Places.All[nth].Leaves[0].Page);
+            e.Handled = true;
+            return;
+        }
+        if (e.Key != Key.Escape || e.Handled) return;
+        if (_finder is { Open: true }) { _finder.Close(); e.Handled = true; }
+        // Escape puts the sheet away and gives the floor the window back — never while the owner is typing: there it is the box's own key.
+        else if (_shown != Page.Floor && e.Source is not TextBox) { Select(Page.Floor); e.Handled = true; }
+    }
+
+    /// <summary>
+    /// WHAT STATE THE APP IS IN, on glass at the top right: the mode, the platform and account, whether the AI may trade — and the stop.
+    /// </summary>
+    Control BuildStatus()
+    {
         // THE AI LINE TAKES WHAT IS LEFT AND IS CUT WITH AN ELLIPSIS, never run under the stop button: its reason can be a whole sentence
         // ("paused — no account has been chosen — choose one on the Settings page"), and the full sentence is on the Dashboard and in
         // the line's own tooltip.
-        var ai = new DockPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(Tokens.S4, 0, Tokens.S4, 0) };
-        ai.Children.Add(Ui.With(_aiDot, d => { d.Margin = new Thickness(0, 0, Tokens.S2, 0); DockPanel.SetDock(d, Dock.Left); }));
-        ai.Children.Add(_metaAi);
-        ai[Grid.ColumnProperty] = 1;
-
-        var meta = Ui.Row(Tokens.S4,
-            brand,
-            Sep(),
-            _modePillHost,
-            Sep(),
-            _metaPlatform,
-            Sep(),
-            Ui.With(Ui.Row(Tokens.S2, MetaLabel("Account"), _metaAccount),
-                r => r.VerticalAlignment = VerticalAlignment.Center),
-            Sep());
-        meta.VerticalAlignment = VerticalAlignment.Center;
+        _metaAi.MaxWidth = Tokens.StatusLineMaxWidth;
+        var ai = Ui.Row(Tokens.S2, _aiDot, _metaAi);
+        ai.VerticalAlignment = VerticalAlignment.Center;
 
         // The kill switch lives in the chrome, not on a page. A stop that is one nav click away is
         // not a stop.
@@ -463,22 +510,30 @@ public sealed class MainWindow : Window
             () => _host.Gateway.StopAiTrading($"you pressed {Labels.StopAiTrading}"),
             () => _host.Gateway.EnableAiTrading());
         _stopButton.VerticalAlignment = VerticalAlignment.Center;
-        _stopButton[Grid.ColumnProperty] = 2;
+        _stopButton.MaxWidth = Tokens.StopMaxWidth;
+        // THE STOP'S LIGHT: red while a press would stop, gone once it has — then the words beside it are RESUME, and say so.
+        _stopLight.VerticalAlignment = VerticalAlignment.Center;
+        var stop = Ui.Row(0, _stopLight, _stopButton);
+        stop.VerticalAlignment = VerticalAlignment.Center;
 
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
-        grid.Children.Add(meta);
-        grid.Children.Add(ai);
-        grid.Children.Add(_stopButton);
+        var row = Ui.Row(Tokens.S3,
+            _modePillHost,
+            _metaPlatform,
+            Ui.With(Ui.Row(Tokens.S2, MetaLabel("Account"), _metaAccount), r => r.VerticalAlignment = VerticalAlignment.Center),
+            Sep(),
+            ai,
+            Sep(),
+            stop);
+        row.VerticalAlignment = VerticalAlignment.Center;
 
-        return new Border
+        _status = new Border
         {
-            Height = Tokens.HeaderHeight,
-            Background = Tokens.BgRail,
-            BorderBrush = Tokens.Line,
-            BorderThickness = new Thickness(0, 0, 0, 1),
-            Padding = new Thickness(Tokens.S5, 0),
-            Child = grid
+            HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(Tokens.S3, Tokens.S3, Tokens.SheetGap, Tokens.S2),
+            Padding = new Thickness(Tokens.S4, 4, Tokens.S1, 4),
+            CornerRadius = Tokens.Pill, Background = Tokens.GlassFill, Child = row
         };
+        return _status;
     }
 
     /// <summary>The earlier armed home's strip: built once with the shell, updated in place first on every tick.</summary>
@@ -486,7 +541,7 @@ public sealed class MainWindow : Window
     {
         _earlierArmed = EarlierArmedStrip(_host);
         // MARGINS ON THE CARD AND ITS NOTE, never on a wrapper: a hidden control takes no room, so a home nothing armed shows no band.
-        _earlierArmed.Card.Margin = new Thickness(Tokens.S5, Tokens.S3);
+        _earlierArmed.Card.Margin = new Thickness(Tokens.S5, Tokens.S2, Tokens.S5, 0);
         _earlierArmed.Note.Margin = new Thickness(Tokens.S5, Tokens.S2);
         return _earlierArmed.Root;
     }
@@ -498,11 +553,11 @@ public sealed class MainWindow : Window
     internal static OwnerPage.EarlierArmedHome EarlierArmedStrip(AppHost host) =>
         new(() => host.Gateway.EarlierLiveSetting, () => host.Gateway.SetAsideEarlierLiveSetting());
 
-    /// <summary>The header's AI line's tone: the dot beside it.</summary>
+    /// <summary>The AI line's tone: the dot beside it.</summary>
     internal enum AiTone { Allowed, Paused, Stopped, Refused }
 
     /// <summary>
-    /// THE HEADER'S AI LINE (fix pass 1, Codex P2). An earlier armed home comes FIRST, before "stopped": while it stands every order is
+    /// THE AI LINE (fix pass 1, Codex P2). An earlier armed home comes FIRST, before "stopped": while it stands every order is
     /// refused whatever the kill switch says, and "AI trading stopped" would hide the one thing the owner has to do — set it aside.
     /// </summary>
     internal static (string Text, AiTone Tone) AiLine(GatewayStatus status, Core.Board.EarlierLiveSetting? earlier) =>
@@ -578,88 +633,10 @@ public sealed class MainWindow : Window
         return _updateBanner;
     }
 
-    Control BuildRail()
-    {
-        // GROUP BY GROUP, in the rail's own order: a quiet word over each group but the first.
-        var labels = Rail.ToDictionary(r => r.Page, r => r.Label);
-        foreach (var (title, pages) in RailGroups)
-        {
-            if (title is not null)
-                _navStack.Children.Add(Ui.With(Ui.Eyebrow(title), t => t.Margin = new Thickness(Tokens.S3, Tokens.S3, 0, 2)));
-            foreach (var page in pages) AddNav(page, labels[page]);
-        }
-
-        var summary = new Button
-        {
-            Classes = { "nav" },
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            Content = new Grid
-            {
-                ColumnDefinitions = new ColumnDefinitions("Auto,*"),
-                Children =
-                {
-                    Ui.With(_healthDot, d => d.Margin = new Thickness(0, 0, Tokens.S2, 0)),
-                    Ui.With(_healthSummary, t => t[Grid.ColumnProperty] = 1)
-                }
-            }
-        };
-        summary.Click += (_, _) => Select(Page.Checks);
-
-        // THE NAMES SCROLL IF THE WINDOW IS SHORT, never clip: at the smallest window the owner can make, the last group is still reachable.
-        var rail = new Grid { RowDefinitions = new RowDefinitions("*,Auto") };
-        rail.Children.Add(new ScrollViewer
-        {
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Content = new Border { Padding = new Thickness(Tokens.S2, Tokens.S2), Child = _navStack }
-        });
-        rail.Children.Add(new Border
-        {
-            BorderBrush = Tokens.Line,
-            BorderThickness = new Thickness(0, 1, 0, 0),
-            Padding = new Thickness(Tokens.S3),
-            Child = summary,
-            [Grid.RowProperty] = 1
-        });
-
-        return new Border
-        {
-            Background = Tokens.BgRail,
-            BorderBrush = Tokens.Line,
-            BorderThickness = new Thickness(0, 0, 1, 0),
-            Child = rail
-        };
-    }
-
-    void AddNav(Page page, string label)
-    {
-        // THE WORD AND THE DRAWING TAKE THE BUTTON'S OWN COLOUR AND WEIGHT, bound, never set: the theme paints hover and the selected
-        // state through classes on the button, and a TextBlock child left to itself takes the app-level TextBlock foreground instead
-        // and never changes with them.
-        var b = new Button { Classes = { "nav" }, HorizontalAlignment = HorizontalAlignment.Stretch };
-        var icon = Icons.Line(RailIcon(page));
-        icon[!Shape.StrokeProperty] = b[!TemplatedControl.ForegroundProperty];
-        var word = new TextBlock
-        {
-            Text = label, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis,
-            [Grid.ColumnProperty] = 1
-        };
-        word[!TextBlock.ForegroundProperty] = b[!TemplatedControl.ForegroundProperty];
-        word[!TextBlock.FontWeightProperty] = b[!TemplatedControl.FontWeightProperty];
-        b.Content = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions("Auto,*"),
-            Children = { Ui.With(Icons.Boxed(icon, Tokens.IconSize), i => i.Margin = new Thickness(0, 0, Tokens.S3, 0)), word }
-        };
-        b.Click += (_, _) => Select(page);
-        _nav[page] = b;
-        _navIcons[page] = icon;
-        _navStack.Children.Add(b);
-    }
-
     void BuildPages()
     {
-        _floor = new FloorPage(FloorSources.For(_host), StartOrStopAgentAsync, Select);
+        _sheet = new Sheet(() => Select(Page.Floor));
+        _floor = new FloorPage(FloorSources.For(_host), StartOrStopAgentAsync, Select) { Manual = Stepped };
         _chat = new ChatView(_host, StartOrStopAgentAsync);
         var org = OrgSurfaceSources.For(_host);
         _organisation = new OrganisationPage(org);
@@ -677,7 +654,7 @@ public sealed class MainWindow : Window
         _checks = new ChecksPage(_host);
         _oversightPage = new OversightPage(OversightSources.For(_host));
 
-        Add(Page.Floor, _floor.Root);
+        // EVERY PAGE BUT THE FLOOR'S OWN is a sheet over the floor (Places). The floor is no page of the sheet: it is the window.
         Add(Page.Chat, _chat.Root);
         Add(Page.Organisation, _organisation.Root);
         Add(Page.Work, _work.Root);
@@ -696,34 +673,31 @@ public sealed class MainWindow : Window
         void Add(Page page, Control control)
         {
             control.IsVisible = false;
-            // A PAGE OF WORDS IS NO WIDER THAN IT CAN BE READ, and sits in the middle of whatever is left; the floor takes everything.
-            if (page != Page.Floor) control.MaxWidth = Tokens.PageMaxWidth;
             _pages[page] = control;
-            _pageHost.Children.Add(control);
+            _sheet.Host.Children.Add(control);
         }
     }
 
+    /// <summary>
+    /// THE OWNER GOES SOMEWHERE. The floor's own overview puts the sheet away; any other page brings the sheet in with that page on it,
+    /// and the camera goes to the thing the page is about. Nothing is rebuilt: the page was built with the shell and is only shown.
+    /// </summary>
     void Select(Page page)
     {
         var was = _shown;
-        foreach (var (key, button) in _nav)
-        {
-            if (key == page) { if (!button.Classes.Contains("on")) button.Classes.Add("on"); }
-            else button.Classes.Remove("on");
-            // The page being shown has its drawing in the accent: the one small light in the rail. Every other drawing follows its button.
-            if (!_navIcons.TryGetValue(key, out var icon)) continue;
-            if (key == page) icon.Stroke = Tokens.Accent;
-            else icon[!Shape.StrokeProperty] = button[!TemplatedControl.ForegroundProperty];
-        }
-        // The floor runs edge to edge; a page of words keeps its margins on every side, the bottom's included — the Chat page's box
-        // and its hint line are the last thing on their page, and must not sit against the window's edge.
-        _pageFrame.Padding = page == Page.Floor ? default : new Thickness(Tokens.S6);
+        _dock?.Select(page);
         foreach (var (key, control) in _pages) control.IsVisible = key == page;
-        _floor?.Shown(page == Page.Floor);
-        if (was != page || !_everShown) ComeIn(_pages[page]);
+        var sheet = Places.HasSheet(page);
+        // Whatever the floor was replaying, a page is the present's: its figures beside a floor showing last week would be two times at once.
+        if (sheet) _floor?.Present();
+        _sheet?.Show(sheet);
+        if (_floor is not null) _floor.Stage.Behind = sheet;
+        _floor?.Go(page);
+        if (sheet && (was != page || !_everShown)) ComeIn(_pages[page]);
         _everShown = true;
         // BROUGHT UP TO DATE AS IT IS SHOWN (U-perf-scan): a page the tick left alone while it was hidden is never shown stale.
         _shown = page;
+        Lay();
         if (_lastStatus is { } status)
         {
             try { foreach (var shown in PagesToUpdate(page)) UpdatePage(shown, status); }
@@ -740,7 +714,7 @@ public sealed class MainWindow : Window
         // kill switch included, decides whether it shows.
         _earlierArmed?.Update();
 
-        // The pill is the one header element that changes shape rather than text, so it is rebuilt —
+        // The pill is the one element here that changes shape rather than text, so it is rebuilt —
         // but only when the mode actually changed, never on the five-second tick.
         var modeSignature = $"{status.Mode}|{status.LiveActivated}";
         if (modeSignature != _modeSignature)
@@ -767,60 +741,40 @@ public sealed class MainWindow : Window
         if (_stopButton is not null)
             Ui.SetResting(_stopButton,
                 status.AiTradingStopped ? Labels.ResumeAiTrading : Labels.StopAiTrading,
-                status.AiTradingStopped ? "primary" : "danger");
+                status.AiTradingStopped ? "resume" : "stop");
+        _stopLight.IsVisible = !status.AiTradingStopped;
 
         _oversightBanner?.Update();
         RefreshUpdateBanner(status);
-        UpdateRailHealth();
+        UpdateMachineLight();
 
         // THE PAGE THE OWNER IS LOOKING AT, NOT ALL FOURTEEN (U-perf-scan, R28 G3): every tick rebuilt every page's read — the scorecards
         // among them — on this thread, for pages nobody could see. A page is brought up to date when it is shown (Select) and on every
-        // tick while it is.
+        // tick while it is. The floor is the window, on screen behind every sheet, so it is looked at on every tick too.
         _lastStatus = status;
+        if (_shown != Page.Floor) UpdatePage(Page.Floor, status);
         foreach (var page in PagesToUpdate(_shown)) UpdatePage(page, status);
     }
 
-    /// <summary>The page shown in the page host; the rail's first until the owner presses another.</summary>
+    /// <summary>The page shown on the sheet — or the floor's own overview, with no sheet, until the owner goes somewhere.</summary>
     Page _shown = Page.Floor;
 
     bool _everShown;
 
     /// <summary>
     /// A PAGE COMES IN (<c>U-ui-alive</c>): it rises a few pixels into place as it clears. Nothing is rebuilt and nothing waits on it — the
-    /// page is already the page, updated and pressable, from its first frame; only how it is painted changes for a fifth of a second.
+    /// page is already the page, updated and pressable, from its first frame; only how it is painted changes for a moment.
     /// </summary>
     void ComeIn(Control page)
     {
-        // A PAGE LEFT AND COME BACK TO WITHIN ITS FIFTH OF A SECOND is coming in twice at once. Only the latest coming-in tidies up after
-        // itself, and it is held to nothing it throws: how a page is painted for a moment must never be what ends the program.
-        var turn = _comings[page] = _comings.GetValueOrDefault(page) + 1;
-        try
+        // How a page is painted for a moment must never be what ends the program.
+        try { Motion.Rise(page, Tokens.PageRise, lasts: Tokens.PageIn); }
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
         {
-            page.RenderTransform = new TranslateTransform(0, Tokens.PageRise);
-            page.Opacity = 0;
-            var animation = new Animation
-            {
-                Duration = Tokens.PageIn, Easing = new CubicEaseOut(), FillMode = FillMode.Forward,
-                Children =
-                {
-                    new KeyFrame { Cue = new Cue(0), Setters = { new Setter(Visual.OpacityProperty, 0.0), new Setter(TranslateTransform.YProperty, Tokens.PageRise) } },
-                    new KeyFrame { Cue = new Cue(1), Setters = { new Setter(Visual.OpacityProperty, 1.0), new Setter(TranslateTransform.YProperty, 0.0) } }
-                }
-            };
-            _ = animation.RunAsync(page).ContinueWith(_ => Dispatcher.UIThread.Post(() => Settle(page, turn)), TaskScheduler.Default);
+            page.Opacity = 1;
+            page.RenderTransform = null;
         }
-        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException)) { Settle(page, turn); }
     }
-
-    /// <summary>The page as it was built: no transform and full strength, whatever the animation's last frame was — unless it has since begun coming in again.</summary>
-    void Settle(Control page, int turn)
-    {
-        if (_comings.GetValueOrDefault(page) != turn) return;
-        page.Opacity = 1;
-        page.RenderTransform = null;
-    }
-
-    readonly Dictionary<Control, int> _comings = new();
 
     /// <summary>The last tick's status, so a page selected between ticks is brought up to date at once.</summary>
     GatewayStatus? _lastStatus;
@@ -954,7 +908,8 @@ public sealed class MainWindow : Window
             desktop.Shutdown();
     }
 
-    void UpdateRailHealth()
+    /// <summary>The machine's light in the dock: how this computer's parts stand, in the worst one's colour, and said in its tooltip.</summary>
+    void UpdateMachineLight()
     {
         var health = _host.Health.Snapshot();
         var failed = health.Count(h => h.State == HealthState.FAILED);
@@ -969,9 +924,7 @@ public sealed class MainWindow : Window
             : unknown > 0 ? (Tokens.Neutral, unknown == 1 ? "1 part not checked yet" : $"{unknown} parts not checked yet")
             : (Tokens.Positive, "All systems ready");
 
-        _healthDot.Fill = tone;
-        _healthSummary.Text = text;
-        _healthSummary.Foreground = tone == Tokens.Positive ? Tokens.TextMuted : tone;
+        _dock?.Light(Place.Machine, tone, text);
     }
 
     /// <summary>
@@ -981,7 +934,7 @@ public sealed class MainWindow : Window
     /// It is the chrome's variant pair rather than the emergency fill; the behaviour is identical.
     /// </summary>
     internal static Button BuildKillSwitch(Func<bool> stopped, Action stop, Action resume) =>
-        Ui.KillSwitch(stopped() ? "primary" : "danger", stopped, stop, resume);
+        Ui.KillSwitch(stopped() ? "resume" : "stop", stopped, stop, resume);
 
     /// <summary>
     /// Starting the AI opens a conversation, not a console. The page switch is the whole point of

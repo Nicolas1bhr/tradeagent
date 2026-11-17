@@ -46,7 +46,7 @@ sealed class ReportPage
     // A plain WrapPanel with the spacing as a margin on each child, the way Ui.Wrap does it:
     // the panel's own spacing properties are not version-proof across Avalonia releases.
     readonly WrapPanel _days = new();
-    readonly StackPanel _body = new() { Spacing = Theme.S1 };
+    readonly StackPanel _body = new() { Spacing = 0 };
 
     /// <summary>The most earlier days offered at once. Older ones are still on disk.</summary>
     const int DaysOffered = 14;
@@ -63,14 +63,24 @@ sealed class ReportPage
     {
         _host = host;
 
-        _noteSection = Ui.Col(Theme.S2,
+        // THE NOTE BESIDE THE FACTS: the AI's words, so it hangs from the AI's indigo rule — the one place on this page the colour is
+        // spent, and it marks exactly the part that is not measurement.
+        _noteSection = Ui.With(new Border
+        {
+            BorderBrush = Theme.Accent,
+            BorderThickness = new Thickness(Theme.ChatRule, 0, 0, 0),
+            Padding = new Thickness(Theme.S4, Theme.S1, 0, Theme.S1),
+            Child = Ui.Col(Theme.S2,
             Ui.H2("The Operations Director's note"),
             Ui.With(Ui.Muted("Written by your AI, not measured by TradeAgent. It appears only on a day "
                              + "something changed."), t => t.FontSize = Theme.Small),
-            _noteText);
+            _noteText)
+        }, b => b.Margin = new Thickness(0, Theme.S2, 0, 0));
 
+        // THE DAYS AS A STRIP (U-ui-world): each a word on the pane, the one being read at full strength — the strip is a way through
+        // the reports, not a row of buttons. The two presses stand at its head.
         var body = Ui.Col(Theme.S6,
-            Ui.Col(Theme.S2,
+            Ui.Col(Theme.S3,
                 Ui.With(Ui.Row(Theme.S2,
                         Ui.Secondary("Write it now", WriteNow),
                         Ui.Ghost("Today", () => Select(null))),
@@ -123,8 +133,11 @@ sealed class ReportPage
             foreach (var d in days.Take(DaysOffered))
             {
                 var button = Ui.Ghost(d, () => Select(d));
-                button.Margin = new Thickness(0, 0, Theme.S2, Theme.S2);
-                Ui.Emphasise(button, d == day);
+                button.Classes.Remove("ghost");
+                button.Classes.Add("leaf");
+                if (d == day) button.Classes.Add("on");
+                button.FontFeatures = Theme.Tabular;
+                button.Margin = new Thickness(0, 0, Theme.S1, Theme.S1);
                 _days.Children.Add(button);
             }
         }
@@ -148,19 +161,35 @@ sealed class ReportPage
     /// One line of the document, as words. A heading is a heading and everything else is body text;
     /// nothing is reformatted, reordered or dropped, because a report the screen edits is not the
     /// report the file says was written.
+    ///
+    /// <para>SET, NOT REFLOWED (<c>U-ui-world</c>): the document's title large and light; each numbered section opens with room and a
+    /// hairline above its heading; a short line — a name and its figure — in figures that line up, at the page's strength; a long one
+    /// is prose, set to read, quieter and no wider than a line is read. Every line is still one line of the file, in its order.</para>
     /// </summary>
     static Control Line(string raw)
     {
-        if (raw.StartsWith("## ", StringComparison.Ordinal)) return Ui.H3(raw[3..]);
-        if (raw.StartsWith("# ", StringComparison.Ordinal)) return Ui.H2(raw[2..]);
+        if (raw.StartsWith("## ", StringComparison.Ordinal))
+            return Ui.Col(Theme.S3,
+                Ui.With(new Border { Height = 1, Background = Theme.Line }, b => b.Margin = new Thickness(0, Theme.ReportSectionGap, 0, 0)),
+                Ui.With(Ui.H3(raw[3..]), t => t.Margin = new Thickness(0, 0, 0, Theme.S2)));
+        if (raw.StartsWith("# ", StringComparison.Ordinal))
+            return Ui.With(Ui.StateLarge(raw[2..]), t => t.Margin = new Thickness(0, 0, 0, Theme.S2));
         if (raw.Length == 0) return Ui.Spacer(Theme.S2);
 
         var text = raw.StartsWith("- ", StringComparison.Ordinal) ? raw[2..] : raw;
-        var block = Ui.Body(text, raw.Contains("missing (", StringComparison.Ordinal)
-            ? Theme.Caution
-            : Theme.TextMuted);
+        var missing = raw.Contains("missing (", StringComparison.Ordinal);
+        var prose = text.Length >= Theme.ReportProseLength;
+        var block = Ui.Body(text, missing ? Theme.Caution : prose ? Theme.TextMuted : Theme.Text);
         block.FontSize = Theme.Small;
+        block.LineHeight = Theme.ReportLine;
         block.TextWrapping = TextWrapping.Wrap;
+        block.FontFeatures = Theme.Tabular;
+        block.Margin = new Thickness(0, 0, 0, prose || missing ? Theme.S2 : 0);
+        if (prose)
+        {
+            block.MaxWidth = Theme.ReportProseWidth;
+            block.HorizontalAlignment = HorizontalAlignment.Left;
+        }
         return block;
     }
 

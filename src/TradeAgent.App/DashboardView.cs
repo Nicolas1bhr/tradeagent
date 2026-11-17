@@ -24,14 +24,16 @@ namespace TradeAgent.App;
 /// </summary>
 static class Pages
 {
+    /// <summary>A page's name, large and light, and under it what the page is, no wider than it reads.</summary>
     public static Control Header(string title, string subtitle) =>
-        Ui.With(Ui.Col(Theme.S1, Ui.H1(title), Ui.With(Ui.Muted(subtitle), t =>
+        Ui.With(Ui.Col(Theme.S2, Ui.Title(title),
+            Ui.With(Ui.Muted(subtitle), t =>
             {
                 // A line of words is read, not scanned: no wider than a reader's eye crosses comfortably, however wide the window is.
                 t.MaxWidth = Theme.LedeMaxWidth;
                 t.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left;
             })),
-            c => c.Margin = new Thickness(0, 0, 0, Theme.S6));
+            c => c.Margin = new Thickness(0, 0, Theme.S8, Theme.S8));
 
     /// <summary>A scrolling page body with room for the scrollbar to sit outside the content.</summary>
     public static ScrollViewer Scroll(Control content) => new()
@@ -99,14 +101,23 @@ static class BridgeRepair
 /// <summary>The live picture, plus anything the AI is currently waiting on the user to answer.</summary>
 sealed class DashboardPage
 {
-    static readonly string[] FactKeys =
-        ["Trading mode", "Platform", "Account", "AI trading", "Open orders / unconfirmed"];
-
     readonly AppHost _host;
     readonly Func<Task> _toggleAgent;
 
-    readonly Dictionary<string, TextBlock> _values = new();
-    readonly StackPanel _healthRows = new() { Spacing = 2 };
+    // THE DESK (U-ui-world): the five facts set as what they are — the mode and whether the AI may trade large, the two counts as
+    // figures, the platform and the account as the line they stand on — each a text block written in place on the tick.
+    readonly TextBlock _mode = Ui.ReadoutLarge();
+    readonly TextBlock _tradingWord = Ui.ReadoutLarge();
+    readonly Avalonia.Controls.Shapes.Ellipse _tradingDot = Ui.StateDot();
+    /// <summary>The "AI trading" fact in its own words, under the word set large, whenever it says more than that word.</summary>
+    readonly TextBlock _tradingSentence = Ui.With(Ui.Body(""), t => { t.FontSize = Theme.Small; t.IsVisible = false; });
+    readonly TextBlock _platform = Ui.With(Ui.Body("—"), t => t.FontSize = Theme.Small);
+    readonly TextBlock _account = Ui.Mono("—");
+    readonly TextBlock _openOrders = Ui.FigureText();
+    readonly TextBlock _unconfirmedCount = Ui.FigureText();
+
+    readonly StackPanel _healthRows = new() { Spacing = Theme.S1 };
+    readonly TradingHealthStrip _healthStrip = new();
     readonly Button _agentButton;
 
     readonly PerformanceCard _performance = new();
@@ -128,13 +139,23 @@ sealed class DashboardPage
     readonly List<UnconfirmedRow> _unconfirmedRows = [];
 
     readonly Button _workButton;
-    readonly TextBlock _missionState = Ui.With(Ui.Body("—"), t =>
+    readonly TextBlock _missionState = Ui.With(Ui.StateLarge(), t =>
     {
-        t.FontWeight = FontWeight.SemiBold;
-        t.TextWrapping = TextWrapping.Wrap;
+        t.FontSize = Theme.MissionState;
+        t.LineHeight = Theme.MissionStateLine;
     });
+    readonly Avalonia.Controls.Shapes.Ellipse _missionDot = Ui.StateDot();
     readonly TextBlock _missionCounts = Ui.Micro("");
     readonly TextBlock _missionCost = Ui.Micro("");
+
+    // TODAY'S AI SPEND OF ITS DAILY LIMIT, DRAWN (U-ui-world): one measure per ceiling the reading carries — real money, and the plan's
+    // capacity beside it where there is one. Unknown stays unknown: a reading that cannot be priced is drawn empty, never as nothing spent.
+    readonly Meter _moneyMeter = new();
+    readonly TextBlock _moneyName = new(), _moneyFigure = new();
+    readonly Control _moneyMeasure;
+    readonly Meter _planMeter = new();
+    readonly TextBlock _planName = new(), _planFigure = new();
+    readonly Control _planMeasure;
     readonly TextBlock _missionLast = Ui.Muted("");
     readonly TextBox _guidance;
 
@@ -189,17 +210,27 @@ sealed class DashboardPage
         _host = host;
         _toggleAgent = toggleAgent;
 
-        var facts = new StackPanel { Spacing = 2 };
-        foreach (var key in FactKeys)
+        // THE DESK: the mode set large with the two counts beside it; whether the AI may trade, in its colour, under it; the platform and
+        // the account the line it all stands on. The account is compared with the platform's own, so it keeps the mono face.
+        var counts = Ui.Row(Theme.FigureGap,
+            Ui.Figure(_openOrders, "Open orders"),
+            Ui.Figure(_unconfirmedCount, "Unconfirmed"));
+        counts[Grid.ColumnProperty] = 1;
+        counts.Margin = new Thickness(Theme.S6, 0, 0, 0);
+        counts.VerticalAlignment = VerticalAlignment.Bottom;
+        _tradingDot.Margin = new Thickness(0, 4, 0, 0);
+        var states = Ui.Spread(Theme.FigureGap, Theme.S2,
+            Ui.Readout("Trading mode", _mode),
+            Ui.Readout("AI trading", Ui.Row(Theme.S3, _tradingDot, _tradingWord)));
+        var modeLine = new Grid
         {
-            // Counts and account numbers are compared with other numbers, so they are set in the
-            // mono face; the two prose values are not.
-            var value = key is "Open orders / unconfirmed" or "Account"
-                ? Ui.Mono("—")
-                : Ui.With(Ui.Body("—"), t => t.FontSize = Theme.Small);
-            _values[key] = value;
-            facts.Children.Add(Ui.KeyValueLive(key, value));
-        }
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            Children = { states, counts }
+        };
+        var where = Ui.Spread(Theme.FigureGap, Theme.S2,
+            Ui.Readout("Platform", _platform),
+            Ui.Readout("Account", _account));
+        var facts = Ui.Col(Theme.S4, modeLine, _tradingSentence, Ui.With(where, w => w.Margin = new Thickness(0, Theme.S2, 0, 0)));
 
         _agentButton = Ui.Primary("Start the AI", async () => await _toggleAgent());
 
@@ -223,15 +254,8 @@ sealed class DashboardPage
         //
         // It is the first card on the page because it outranks everything below it: while anything is unconfirmed,
         // TryAuthorizeExecution refuses.
-        _unconfirmedCard = new Border
-        {
-            Background = Theme.DangerSoft,
-            BorderBrush = Theme.Danger,
-            BorderThickness = new Thickness(1),
-            CornerRadius = Theme.Radius,
-            Padding = new Thickness(Theme.S5),
-            IsVisible = false,
-            Child = Ui.Col(Theme.S3,
+        // THE ONE EDGED BLOCK ON THE PAGE (U-ui-world): a notice, because it outranks every word under it.
+        _unconfirmedCard = Ui.Notice(Theme.Danger, Ui.Col(Theme.S3,
                 Ui.With(Ui.Eyebrow("Orders TradeAgent could not confirm"), t => t.Foreground = Theme.Danger),
                 Ui.Body("An order was sent and no answer came back, so TradeAgent does not know whether it reached your broker. "
                         + "It will not let the AI trade until that is settled."),
@@ -243,8 +267,8 @@ sealed class DashboardPage
                 // is not on their screen.
                 Ui.Micro("If the order is still working in ATAS, cancel it there first — then what you tell TradeAgent "
                          + "below is true. Every answer here is written into the activity log with your note."),
-                Ui.With(_unconfirmed, p => p.Margin = new Thickness(0, Theme.S2, 0, 0)))
-        };
+                Ui.With(_unconfirmed, p => p.Margin = new Thickness(0, Theme.S2, 0, 0))));
+        _unconfirmedCard.IsVisible = false;
 
         // The AI's own work. Built once, like everything else on this page: the five-second tick
         // rewrites the text of these four controls and touches nothing else, so a half-pressed
@@ -287,9 +311,22 @@ sealed class DashboardPage
             Activity = line => host.Gateway.Log.Activity(line)
         });
 
+        _moneyMeasure = Ui.Measure(_moneyName, _moneyFigure, _moneyMeter);
+        _planMeasure = Ui.Measure(_planName, _planFigure, _planMeter);
+
         var aiCard = Ui.Col(Theme.S3,
-            _missionState,
+            // The loop's state set as the section's one large line, its dot in the same tone.
+            Ui.With(new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("Auto,*"),
+                Children =
+                {
+                    Ui.With(_missionDot, d => { d.VerticalAlignment = VerticalAlignment.Top; d.Margin = new Thickness(0, 8, Theme.S3, 0); }),
+                    Ui.With(_missionState, t => t[Grid.ColumnProperty] = 1)
+                }
+            }, g => g.Margin = new Thickness(0, 0, 0, Theme.S1)),
             _missionCounts,
+            Ui.With(Ui.Col(Theme.S3, _moneyMeasure, _planMeasure), c => c.Margin = new Thickness(0, Theme.S2, 0, 0)),
             _missionCost,
             Ui.With(_missionLast, t => t.FontSize = Theme.Small),
             // NOT IN A ROW: a row gives its children all the width they ask for, and the armed sentence asked for more than the card has
@@ -324,30 +361,39 @@ sealed class DashboardPage
             Ui.Section("The AI's own work", aiCard),
             _performance.Root);
 
-        var right = Ui.Section("System health", _healthRows);
-        right.Margin = new Thickness(Theme.S5, 0, 0, 0);
-
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
-        grid.Children.Add(Pages.Column(0, left));
-        grid.Children.Add(Pages.Column(1, right));
+        // ONE COLUMN (U-ui-world): the page is read on a sheet beside the floor, and a second column there was a column too narrow to
+        // read. This computer's parts close the page; the machine's own place has them in full.
+        left.Children.Add(Ui.Section("System health", Ui.Col(Theme.S4, _healthStrip, _healthRows)));
 
         Root = Pages.Scroll(Ui.Col(0,
             Pages.Header("Dashboard", "What TradeAgent and the AI are doing right now."),
-            grid));
+            left));
     }
 
     public void Update(GatewayStatus status)
     {
-        _values["Trading mode"].Text = Ui.ModeLabel(status.Mode);
-        _values["Platform"].Text = Ui.PlatformLabel(status);
-        _values["Account"].Text = status.AccountId ?? "not selected";
-        _values["AI trading"].Text = status.AiTradingStopped ? "STOPPED"
+        _mode.Text = Ui.ModeLabel(status.Mode);
+        _platform.Text = Ui.PlatformLabel(status);
+        _account.Text = status.AccountId ?? "not selected";
+
+        // The word set large is chosen from the status's own flags; the fact's whole sentence stands under it whenever it says more.
+        var tradingWord = status.AiTradingStopped ? "STOPPED" : status.ExecutionAvailable ? "allowed" : "paused";
+        var tradingSentence = status.AiTradingStopped ? "STOPPED"
             : status.ExecutionAvailable ? "allowed"
             : $"paused — {status.ExecutionBlockedReason}";
-        _values["AI trading"].Foreground = status.AiTradingStopped ? Theme.Danger
+        var tradingTone = status.AiTradingStopped ? Theme.Danger
             : status.ExecutionAvailable ? Theme.Positive
             : Theme.Caution;
-        _values["Open orders / unconfirmed"].Text = $"{status.OpenRequests} / {status.UnreconciledRequests}";
+        _tradingWord.Text = tradingWord;
+        _tradingWord.Foreground = tradingTone;
+        _tradingDot.Fill = tradingTone;
+        _tradingSentence.Text = tradingSentence;
+        _tradingSentence.Foreground = tradingTone;
+        _tradingSentence.IsVisible = tradingSentence != tradingWord;
+
+        _openOrders.Text = status.OpenRequests.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        _unconfirmedCount.Text = status.UnreconciledRequests.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        _unconfirmedCount.Foreground = status.UnreconciledRequests > 0 ? Theme.Danger : Theme.Text;
 
         _agentButton.Content = _host.Agent.Running ? "Stop the AI" : "Start the AI";
         MainWindow.SetVariant(_agentButton, _host.Agent.Running ? "secondary" : "primary");
@@ -371,6 +417,7 @@ sealed class DashboardPage
             _healthSignature = hs;
             _healthRows.Children.Clear();
             foreach (var h in health) _healthRows.Children.Add(Ui.StatusRow(h));
+            _healthStrip.Set([.. health.Select(h => Ui.Tone(h.State))]);
         }
     }
 
@@ -439,6 +486,7 @@ sealed class DashboardPage
 
         _missionCost.Text = MissionCost(spend);
         _missionCost.IsVisible = _missionCost.Text.Length > 0;
+        RefreshSpendMeasures(spend);
         _missionCost.Foreground = spend.CapReached ? Theme.Caution
             : !spend.CanPrice ? Theme.Caution
             : Theme.TextFaint;
@@ -455,6 +503,7 @@ sealed class DashboardPage
             MissionState.Paused => Theme.Caution,
             _ => Theme.TextFaint
         };
+        _missionDot.Fill = _missionState.Foreground;
 
         _missionCounts.Text = MissionCounts(status);
         _missionCounts.Foreground = status.ConsecutiveErrors > 0 ? Theme.Danger : Theme.TextFaint;
@@ -607,6 +656,32 @@ sealed class DashboardPage
         // is reached at the moment the next turn is refused rather than one turn later.
         if (!spend.AdmitsAnotherTurn) line += $". The limit is reached; the AI starts again at {spend.ResumesAt:HH:mm}";
         return line + ".";
+    }
+
+    /// <summary>
+    /// THE DAY'S SPEND DRAWN AGAINST EACH CEILING it is read against (<c>U-ui-world</c>), from the reading's own fields — never from the
+    /// sentence. A reading that cannot be priced, or has no ceiling to measure against, is drawn empty and its figure says unknown; a
+    /// reading with no meter at all draws nothing, as the sentence says nothing.
+    /// </summary>
+    void RefreshSpendMeasures(AiSpendToday spend)
+    {
+        _moneyMeasure.IsVisible = spend.Metered;
+        _planMeasure.IsVisible = spend.Metered && spend.PlanReading is not null;
+        if (!spend.Metered) return;
+        Draw(spend with { PlanReading = null }, _moneyName, _moneyFigure, _moneyMeter);
+        if (spend.PlanReading is { } plan) Draw(plan, _planName, _planFigure, _planMeter);
+
+        static void Draw(AiSpendToday r, TextBlock name, TextBlock figure, Meter meter)
+        {
+            name.Text = r.Class == BillingClasses.Plan ? "Plan capacity used today" : "Cost today";
+            var known = r.CanPrice && r.Cap > 0m;
+            figure.Text = r.CanPrice
+                ? $"{MissionSituation.Money(r.Spent, r.Currency)} of {MissionSituation.Money(r.Cap, r.Currency)}"
+                : $"unknown of {MissionSituation.Money(r.Cap, r.Currency)}";
+            var tone = !r.CanPrice || r.CapReached ? Theme.Caution : Theme.Text;
+            figure.Foreground = tone;
+            meter.Set(known ? (double)(r.Spent / r.Cap) : null, tone);
+        }
     }
 
     static string Shorten(string text, int max) => text.Length <= max ? text : text[..max] + "…";
@@ -1058,7 +1133,7 @@ sealed class DashboardPage
 sealed class ActivityPage
 {
     readonly AppHost _host;
-    readonly StackPanel _rows = new() { Spacing = Theme.S1 };
+    readonly StackPanel _rows = new();
     readonly TextBlock _empty = Ui.Muted("Nothing has happened yet. Activity appears here as TradeAgent and the AI work.");
     readonly ScrollViewer _scroll;
     string _signature = "";
@@ -1110,29 +1185,40 @@ sealed class ActivityPage
             // three days of entries running together. A separator is preferred to a date on every
             // row: it keeps the narrow mono time column that makes the list scannable, and it puts
             // the anchor where the reader's eye already stops.
+            //
+            // A TIMELINE (U-ui-world): the day's label quiet above its entries, each entry's time small and tabular at the left, a line
+            // the day runs down with a dot where the entry stands on it — amber for a warning — and the entry's words beside it.
             var day = at.ToLocalTime().Date;
-            if (lastDay != day)
+            var firstOfDay = lastDay != day;
+            if (firstOfDay)
             {
-                if (lastDay is not null) _rows.Children.Add(Ui.With(Ui.Divider(),
-                    d => d.Margin = new Thickness(0, Theme.S3, 0, Theme.S2)));
-                _rows.Children.Add(Ui.With(Ui.Micro(DayLabel(day)),
-                    t => t.Margin = new Thickness(0, lastDay is null ? 0 : 0, 0, Theme.S2)));
+                _rows.Children.Add(Ui.With(Ui.Micro(DayLabel(day)), t =>
+                {
+                    t.FontWeight = FontWeight.SemiBold;
+                    t.Foreground = Theme.TextMuted;
+                    t.Margin = new Thickness(Theme.TimelineTime + Theme.TimelineMark, lastDay is null ? 0 : Theme.S6, 0, Theme.S3);
+                }));
                 lastDay = day;
             }
 
             var warn = level == "warn";
             _rows.Children.Add(new Grid
             {
-                ColumnDefinitions = new ColumnDefinitions("56,*"),
+                ColumnDefinitions = new ColumnDefinitions($"{Theme.TimelineTime},{Theme.TimelineMark},*"),
                 Children =
                 {
-                    Ui.With(Ui.Mono(at.ToLocalTime().ToString("HH:mm"), Theme.TextFaint),
-                        t => t.VerticalAlignment = VerticalAlignment.Top),
                     new TextBlock
                     {
-                        Text = text, FontSize = Theme.Small, TextWrapping = TextWrapping.Wrap,
+                        Text = at.ToLocalTime().ToString("HH:mm"), FontSize = Theme.Micro, FontFeatures = Theme.Tabular,
+                        Foreground = Theme.TextFaint, VerticalAlignment = VerticalAlignment.Top, LineHeight = Theme.TimelineLine
+                    },
+                    new TradingTimelineMark(warn ? Theme.Caution : Theme.LineStrong, firstOfDay) { [Grid.ColumnProperty] = 1 },
+                    new TextBlock
+                    {
+                        Text = text, FontSize = Theme.Small, TextWrapping = TextWrapping.Wrap, LineHeight = Theme.TimelineLine,
                         Foreground = warn ? Theme.Caution : Theme.TextMuted,
-                        [Grid.ColumnProperty] = 1
+                        Margin = new Thickness(Theme.S1, 0, 0, Theme.S3),
+                        [Grid.ColumnProperty] = 2
                     }
                 }
             });
@@ -1174,6 +1260,11 @@ sealed class ChecksPage
 {
     readonly AppHost _host;
     readonly TextBlock _output = Ui.Body("");
+    /// <summary>The doctor's problems, one entry each — its dot, its name, what is wrong, what to do — under <see cref="_output"/>.</summary>
+    readonly StackPanel _problems = new() { Spacing = Theme.S5, IsVisible = false };
+    readonly Avalonia.Controls.Shapes.Ellipse _resultDot = Ui.StateDot();
+    /// <summary>Every part the doctor checked, a dot each in its state's colour: the result at a glance, above its words.</summary>
+    readonly TradingHealthStrip _checked = new() { IsVisible = false };
     readonly TextBlock _placeholder =
         Ui.Muted("Nothing checked yet. Press Check everything and TradeAgent will test each part in turn.");
     readonly Button _showPackage;
@@ -1205,21 +1296,26 @@ sealed class ChecksPage
         // out from under the hand about to complete it.
         _repair.IsVisible = false;
 
-        var well = new Border
+        // THE RESULT, ON THE PANE (U-ui-world): no sunken box — a hairline above it and the words, the verdict set as a line with its
+        // dot, each problem an entry of its own under it. It fills what is left of the page and scrolls by itself; nothing clears it.
+        _output.FontFamily = Theme.SansDisplay;
+        _resultDot.VerticalAlignment = VerticalAlignment.Top;
+        _resultDot.Margin = new Thickness(0, 8, Theme.S3, 0);
+        _resultDot.IsVisible = false;
+        var verdict = new Grid
         {
-            Background = Theme.BgSunken,
-            BorderBrush = Theme.Line,
-            BorderThickness = new Thickness(1),
-            CornerRadius = Theme.Radius,
-            Padding = new Thickness(Theme.S4),
-            MinHeight = 140,
-            ClipToBounds = true,
-            Child = new ScrollViewer
-            {
-                Content = Ui.Col(0, _placeholder, _output),
-                HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled
-            }
+            ColumnDefinitions = new ColumnDefinitions("Auto,*"),
+            Children = { _resultDot, Ui.With(_output, t => t[Grid.ColumnProperty] = 1) }
         };
+        var well = Ui.Card(new ScrollViewer
+        {
+            Content = Ui.Col(Theme.S5, _placeholder, _checked, verdict, _problems),
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            Padding = new Thickness(0, 0, Theme.S3, 0)
+        });
+        well.Padding = new Thickness(0, Theme.S5, 0, 0);
+        well.MinHeight = 140;
+        well.ClipToBounds = true;
         well[Grid.RowProperty] = 1;
         _output.IsVisible = false;
 
@@ -1248,11 +1344,43 @@ sealed class ChecksPage
     {
         Say("Checking…", Theme.TextMuted);
         var report = await _host.RunDoctorAsync();
-        if (report.AllHealthy) { Say("Everything looks healthy.", Theme.Positive); return; }
+        if (report.AllHealthy) { Say("Everything looks healthy.", Theme.Positive); Glance(report); return; }
 
-        Say(string.Join('\n', report.Problems.Select(p =>
-            $"• {p.Name}: {(string.IsNullOrWhiteSpace(p.Detail) ? StateWords(p.State) : p.Detail)}" +
-            (string.IsNullOrWhiteSpace(p.UserAction) ? "" : $"\n    what to do: {p.UserAction}"))), Theme.Text);
+        // EACH PROBLEM AN ENTRY OF ITS OWN: its state's dot, its name, what is wrong — the same words the list said — and what to do.
+        Say("", Theme.Text);
+        _output.IsVisible = false;
+        _resultDot.IsVisible = false;
+        foreach (var p in report.Problems)
+            _problems.Children.Add(Problem(p.Name, p.State,
+                string.IsNullOrWhiteSpace(p.Detail) ? StateWords(p.State) : p.Detail,
+                string.IsNullOrWhiteSpace(p.UserAction) ? null : $"what to do: {p.UserAction}"));
+        _problems.IsVisible = true;
+        Glance(report);
+    }
+
+    void Glance(Diagnostics.DoctorReport report)
+    {
+        _checked.Set([.. report.Checks.Select(c => Ui.Tone(c.State))]);
+        _checked.IsVisible = true;
+    }
+
+    static Control Problem(string name, HealthState state, string what, string? todo)
+    {
+        var words = Ui.Col(Theme.S1,
+            Ui.With(Ui.Body(name), t => t.FontWeight = FontWeight.SemiBold),
+            Ui.With(Ui.Body(what, Theme.TextMuted), t => t.FontSize = Theme.Small));
+        if (todo is not null)
+            words.Children.Add(Ui.With(Ui.Body(todo), t => { t.FontSize = Theme.Small; t.Margin = new Thickness(0, Theme.S1, 0, 0); }));
+        words[Grid.ColumnProperty] = 1;
+        return new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("Auto,*"),
+            Children =
+            {
+                Ui.With(Ui.Dot(Ui.Tone(state)), d => { d.VerticalAlignment = VerticalAlignment.Top; d.Margin = new Thickness(0, 7, Theme.S3, 0); }),
+                words
+            }
+        };
     }
 
     /// <summary>
@@ -1278,15 +1406,25 @@ sealed class ChecksPage
     void CreatePackage()
     {
         _packagePath = Diagnostics.Doctor.CreateSupportPackage(_host.Db);
-        Say($"Saved to {_packagePath}", Theme.Text);
+        Say($"Saved to {_packagePath}", Theme.Text, verdict: false);
         _showPackage.IsVisible = true;
     }
 
-    void Say(string text, IBrush brush)
+    /// <summary>One line in place of whatever was shown: the earlier result, its problems included, gives way to it, as it always did.</summary>
+    void Say(string text, IBrush brush, bool verdict = true)
     {
+        // A verdict is set as the result's one line; a path is a line to read and copy, at the body's size.
+        _output.FontSize = verdict ? Theme.MissionState : Theme.Base;
+        _output.LineHeight = verdict ? Theme.MissionStateLine : Theme.BodyLine;
+        _output.FontWeight = verdict ? FontWeight.Light : FontWeight.Normal;
         _placeholder.IsVisible = false;
+        _problems.Children.Clear();
+        _problems.IsVisible = false;
+        _checked.IsVisible = false;
         _output.IsVisible = true;
         _output.Text = text;
         _output.Foreground = brush;
+        _resultDot.Fill = brush;
+        _resultDot.IsVisible = ReferenceEquals(brush, Theme.Positive);
     }
 }

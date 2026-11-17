@@ -79,6 +79,15 @@ sealed record FloorSources
 
     public Func<DateTimeOffset> Now { get; init; } = () => DateTimeOffset.UtcNow;
 
+    /// <summary>
+    /// Today's spend by unit and by who paid — the Costs page's own read (<see cref="AiAttemptStore.UnitTotalsByClass"/> over the
+    /// owner's day) — or null where the launch ledger is not open. For the floor's money lens; read only while that lens is on.
+    /// </summary>
+    public Func<DateTimeOffset, IReadOnlyList<UnitClassTotals>?> Costs { get; init; } = _ => null;
+
+    /// <summary>How each part of this computer stands, as the Checks page lists them. For the floor's machine lens.</summary>
+    public Func<IReadOnlyList<ComponentHealth>> Health { get; init; } = () => [];
+
     /// <summary>The sources over the running app.</summary>
     public static FloorSources For(AppHost host)
     {
@@ -93,6 +102,8 @@ sealed record FloorSources
         Board = () => host.Board.Seats(),
         Glance = () => GlanceRead.From(host, DateTimeOffset.UtcNow),
         AiRunning = () => host.Agent.Running,
+        Health = () => host.Health.Snapshot(),
+        Costs = now => host.AttemptLedger is { } ledger && OwnerDay.Window(now) is var (from, to) ? ledger.UnitTotalsByClass(from, to) : null,
         TurnsOpen = () => host.Mission.Status is { State: MissionState.Working or MissionState.Waiting, Held: null }
                           && host.DiskPauseWords is null && host.CrashWaitWords is null
     };
@@ -195,6 +206,25 @@ static class FloorWords
         };
     }
 
+    /// <summary>
+    /// The floor's one large line and the sentence under it, from the loop's own words: what stands before its dash, capitalised, and
+    /// what stands after it, as a sentence. Words with no dash, or too long to be set large, are said whole under the floor's own name.
+    /// Nothing is added and nothing is left out: the two lines together are the sentence the Dashboard shows.
+    /// </summary>
+    public static (string Headline, string State) Headline(string loop)
+    {
+        static string Sentence(string words) => words.Length == 0 ? "" : char.ToUpperInvariant(words[0]) + words[1..] + (words[^1] is '.' or '!' or '?' ? "" : ".");
+        loop = loop.Trim();
+        if (loop.Length == 0) return (Labels.NavFloor, "");
+        var dash = loop.IndexOf(" — ", StringComparison.Ordinal);
+        var head = dash > 0 ? loop[..dash] : loop;
+        if (head.Length > HeadlineMost) return (Labels.NavFloor, Sentence(loop));
+        return (char.ToUpperInvariant(head[0]) + head[1..], dash > 0 ? Sentence(loop[(dash + 3)..]) : "");
+    }
+
+    /// <summary>The most letters the large line is set in.</summary>
+    public const int HeadlineMost = 22;
+
     /// <summary>A cost with its currency, or null where nothing priced the turn: unknown is left unsaid, never written as zero.</summary>
     public static string? Money(decimal? amount, string currency) =>
         amount is { } a ? (a.ToString("0.00", CultureInfo.InvariantCulture) + " " + currency).TrimEnd() : null;
@@ -230,6 +260,8 @@ sealed partial class FloorPage
     readonly DispatcherTimer _clock;
 
     // the words over the stage
+    /// <summary>The one large line: the state the organisation is in, in a word or two.</summary>
+    readonly TextBlock _headline = Ui.Hero("");
     readonly TextBlock _state = Ui.Muted("");
     readonly TextBlock _working = Ui.Body("");
     readonly TextBlock _next = Ui.Muted("");
@@ -272,7 +304,7 @@ sealed partial class FloorPage
     public FloorPage(FloorSources sources, Func<Task> startOrStop, Action<MainWindow.Page> go)
     {
         _sources = sources;
-        _feedAll = Ui.With(Ui.Ghost(Labels.FloorFeedAll, () => { _chosen = null; Mark(); Feed(); }), b =>
+        _feedAll = Ui.With(Ui.Ghost(Labels.FloorFeedAll, () => { _chosen = null; Mark(); Feed(); Aim(); }), b =>
         {
             b.FontSize = Theme.Small;
             b.Padding = new Thickness(Theme.S2, 5);
@@ -292,18 +324,29 @@ sealed partial class FloorPage
         _problem.IsVisible = false;
         _next.FontSize = Theme.Small;
 
+        // THE APP'S NAME, SMALL, AND THE ORGANISATION'S STATE, LARGE: what the window says before anything on it is read.
+        var brand = Ui.Row(Theme.S2, Icons.Mark(18), new TextBlock
+        {
+            Text = "TradeAgent", FontSize = Theme.Small, FontWeight = FontWeight.SemiBold, Foreground = Theme.TextMuted,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        brand.Margin = new Thickness(0, 0, 0, Theme.S3);
         var title = Ui.Col(Theme.S1,
-            Ui.Display(Labels.NavFloor),
+            brand,
+            Ui.With(_headline, t => t.MaxWidth = 520),
             Ui.With(_state, t => t.MaxWidth = 460),
             Ui.With(_working, t => { t.MaxWidth = 460; t.Margin = new Thickness(0, Theme.S2, 0, 0); }),
             Ui.With(_next, t => t.MaxWidth = 460),
             Ui.With(_problem, t => t.MaxWidth = 460),
             Ui.With(_notDrawn, t => { t.MaxWidth = 460; t.IsVisible = false; }),
-            Ui.With(_start, c => c.Margin = new Thickness(0, Theme.S3, 0, 0)),
-            Ui.With(BuildReplay(), c => c.Margin = new Thickness(-Theme.S2, Theme.S2, 0, 0)));
+            Ui.With(_start, c => c.Margin = new Thickness(0, Theme.S3, 0, 0)));
+        // THE REPLAY'S PRESSES STAND AT THE FLOOR'S FOOT, over the day's figures: they are the floor's own controls, and under the
+        // title they lay across the far corner of the organisation.
+        _replayRow = Ui.With(BuildReplay(), c => { c.Margin = new Thickness(-Theme.S2, 0, 0, 0); c.HorizontalAlignment = HorizontalAlignment.Left; });
         title.HorizontalAlignment = HorizontalAlignment.Left;
         title.VerticalAlignment = VerticalAlignment.Top;
         title.Margin = new Thickness(Theme.S8, Theme.S6, 0, 0);
+        _title = title;
 
         // WHAT JUST HAPPENED, down the right: sentences on the dark of the stage, no card round them, each fainter than the one above it.
         _feedColumn = new Border
@@ -315,7 +358,8 @@ sealed partial class FloorPage
         };
         _feedAll.IsVisible = false;
 
-        _figures = Ui.Row(Theme.S8,
+        // A ROW THAT WRAPS: beside a sheet the floor's share of the window is narrow, and the spend's sentence goes under the counts.
+        _figures = Ui.Wrap(Theme.S8,
             Stat(_turns, Labels.FloorTurnsToday),
             Stat(_open, Labels.FloorOpenWork),
             Stat(_judge, Labels.FloorToJudge),
@@ -323,33 +367,159 @@ sealed partial class FloorPage
                 c => c.VerticalAlignment = VerticalAlignment.Bottom));
         _figures.Name = "floor-figures";
         _figures.HorizontalAlignment = HorizontalAlignment.Left;
-        _figures.VerticalAlignment = VerticalAlignment.Bottom;
-        _figures.Margin = new Thickness(Theme.S8, 0, 0, Theme.S6);
+        _foot = Ui.Col(Theme.S3, _replayRow, _figures);
+        _foot.HorizontalAlignment = HorizontalAlignment.Left;
+        _foot.VerticalAlignment = VerticalAlignment.Bottom;
+        _foot.Margin = new Thickness(Theme.S8, 0, 0, Theme.S6);
 
-        Root = new Grid { Children = { _stage, _captions, _feedColumn, title, _figures }, ClipToBounds = true };
+        // UNDER THE TITLE, THE WINDOW'S OWN DARK, fading out: where the camera has gone to one part of the floor, the rest of the
+        // floor runs on under the title, and the title is still what is read there.
+        var titleScrim = new Border
+        {
+            Background = Theme.TitleScrim, IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top, Width = 640, Height = 420
+        };
 
-        // THE FLOOR STANDS BETWEEN THE TITLE AND THE FIGURES, and runs a little way under the sentences on the right, where they are darkest.
+        // And under the day's figures at its foot, the same.
+        var footScrim = new Border
+        {
+            Background = Theme.FootScrim, IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Bottom, Width = 720, Height = 300
+        };
+
+        Root = new Grid { Children = { _stage, _captions, titleScrim, footScrim, _feedColumn, title, _foot }, ClipToBounds = true };
+
+        // THE FLOOR STANDS BETWEEN THE TITLE AND THE FIGURES, and runs a little way under the sentences on the right, where they are darkest
+        // — or, while the window has a sheet over its right side, in what the sheet leaves.
         _stage.Clear = size =>
         {
-            var top = title.Bounds.Height > 0 ? title.Bounds.Bottom + 6 : 150;
-            var bottom = _figures.IsVisible && _figures.Bounds.Height > 0 ? _figures.Bounds.Top - 14 : size.Height - 28;
-            return (28, (float)top, (float)(size.Width - (_feedColumn.IsVisible ? FeedWidth - 14 : 28)), (float)bottom);
+            // The floor is looked at from a corner, so the corner of its box nearest the title is empty: it may run up beside the
+            // title's first lines, and is kept only from under the lines below them.
+            // Beside a sheet there is no beside: the floor stands under the title.
+            var top = _reserveRight > 0 ? title.Bounds.Bottom + 6 : _reserveTop + (title.Bounds.Height > 0 ? title.Bounds.Height * 0.42 : 90);
+            var bottom = _foot.IsVisible && _foot.Bounds.Height > 0 ? _foot.Bounds.Top - 10 : size.Height - 28 - _reserveBottom;
+            var right = _reserveRight > 0 ? size.Width - _reserveRight - 24 : size.Width - (_feedColumn.IsVisible ? FeedWidth - 14 : 28);
+            // A stage too small to stand a floor in still gets a box with room in it: the camera fits what it can.
+            return (28, (float)top, (float)Math.Max(right, 28 + 120), (float)Math.Max(bottom, top + 120));
         };
         _stage.Framed += frame => Safely(() => Place(frame));
         _stage.Failed += NotDrawn;
         _stage.Pointed += id => { _pointed = id; Mark(); };
-        _stage.Chosen += id => { _chosen = id == _chosen ? null : id; Mark(); Feed(); };
+        _stage.Chosen += id => { _chosen = id == _chosen ? null : id; Mark(); Feed(); Aim(); };
         Root.PropertyChanged += (_, e) =>
         {
             if (e.Property != Visual.BoundsProperty) return;
-            // On a narrow window the stage keeps the room: the sentences go, the floor stays.
-            _feedColumn.IsVisible = Root.Bounds.Width >= 860;
-            _figures.IsVisible = Root.Bounds.Height >= 520;
+            Fit();
         };
 
         _look = new DispatcherTimer(Look, DispatcherPriority.Background, (_, _) => Read());
         _clock = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, (_, _) => Safely(Tick));
     }
+
+    readonly StackPanel _title;
+    readonly Control _replayRow;
+    readonly StackPanel _foot;
+    double _reserveTop, _reserveRight, _reserveBottom;
+
+    /// <summary>
+    /// THE WINDOW LAYS ITS GLASS OVER THE FLOOR (<c>U-ui-world</c>): how much of the top, the right and the foot of the stage it takes.
+    /// The floor's own words step out of the way — the sentences down the right give their place to a sheet — and the organisation
+    /// stands in what is left, the camera travelling there.
+    /// </summary>
+    public void Reserve(double top, double right, double bottom)
+    {
+        if (top == _reserveTop && right == _reserveRight && bottom == _reserveBottom) return;
+        var moved = right != _reserveRight;
+        _reserveTop = top;
+        _reserveRight = right;
+        _reserveBottom = bottom;
+        _feedColumn.Margin = new Thickness(0, top, 0, bottom);
+        _foot.Margin = new Thickness(Theme.S8, 0, 0, Theme.S4 + bottom);
+        Fit();
+        // A sheet arriving or leaving is a move of the camera's, not a window being resized: it travels.
+        if (moved) _stage.Scene.Glide();
+        _stage.Wake();
+    }
+
+    void Fit()
+    {
+        // On a narrow window, or under a sheet, the stage keeps the room: the sentences go, the floor stays.
+        _feedColumn.IsVisible = _reserveRight <= 0 && Root.Bounds.Width >= 860;
+        // The day's figures belong to the whole floor. Where the camera has gone to one part of it beside a sheet, they are put away:
+        // the floor's share of the window is that part's, and the figures are on the pages that own them.
+        _foot.IsVisible = Root.Bounds.Height >= 520 && !(_reserveRight > 0 && _near);
+        // The floor's own words keep to the floor's share of the window. A replay is the floor's alone: beside a sheet — a page of
+        // the present — its presses are put away with it.
+        var share = Math.Max(240, Root.Bounds.Width - _reserveRight - 2 * Theme.S8);
+        _title.MaxWidth = Math.Min(560, share);
+        _foot.MaxWidth = _reserveRight > 0 ? share : double.PositiveInfinity;
+        _replayRow.IsVisible = _reserveRight <= 0;
+    }
+
+    MainWindow.Page _place = MainWindow.Page.Floor;
+
+    /// <summary>
+    /// THE CAMERA GOES WHERE THE PAGE IS ABOUT (<c>U-ui-world</c>): the whole floor for the organisation's own pages, the owner's place
+    /// and the chief for the conversation, the tape for the desk, the security board's slab for the board, the owner's place for what
+    /// is his, and the floor seen low from the front — what it stands on — for the machine. Nothing on the floor moves; only where it
+    /// is looked at from.
+    /// </summary>
+    public void Go(MainWindow.Page page)
+    {
+        var lens = page switch
+        {
+            MainWindow.Page.Work => FloorLens.Work,
+            MainWindow.Page.Costs => FloorLens.Money,
+            MainWindow.Page.Checks or MainWindow.Page.Activity or MainWindow.Page.Settings => FloorLens.Machine,
+            _ => FloorLens.Structure
+        };
+        var read = lens == FloorLens.Money && _stage.Scene.Reading != FloorLens.Money;
+        _place = page;
+        _stage.Scene.Lens(lens);
+        // The money lens has its own read: asked for now, not at the next look.
+        if (read) { _costs = null; Read(); }
+        Machine();
+        if (page != MainWindow.Page.Floor && _chosen is not null)
+        {
+            _chosen = null;
+            Mark();
+            Feed();
+        }
+        Aim();
+    }
+
+    /// <summary>Points the camera at the cell the owner chose, or else at what the page shown is about.</summary>
+    void Aim()
+    {
+        var scene = _stage.Scene;
+        var plan = scene.Plan;
+        FloorLook? look = null;
+        if (_chosen is { } chosen && plan.ById.ContainsKey(chosen)) look = scene.About(chosen);
+        else if (plan.Slabs.Count > 0)
+        {
+            look = Places.Of(_place).Place switch
+            {
+                App.Place.Talk when plan.Chief is { } chief && plan.ById.TryGetValue(chief, out var cell) => new FloorLook(
+                    Vector3.Min(plan.Owner, cell.Foot) - new Vector3(1.6f, 1.2f, 0), Vector3.Max(plan.Owner, cell.Foot) + new Vector3(1.6f, 0.9f, cell.Height + 0.5f),
+                    FloorScene.RestYaw - 0.16f, FloorScene.RestPitch - 0.1f),
+                App.Place.Desk => scene.AboutTape(),
+                App.Place.Board => scene.AboutUnit(FloorChart.BoardUnit),
+                App.Place.Yours => scene.About(FloorScene.OwnerId),
+                App.Place.Machine => scene.AboutMachine(),
+                _ => null
+            };
+        }
+        scene.Look(look);
+        _near = look is not null;
+        Fit();
+        _stage.Wake();
+    }
+
+    /// <summary>The camera is on one part of the floor, not the whole of it.</summary>
+    bool _near;
+
+    /// <summary>Whatever the floor was replaying, it shows the present again.</summary>
+    public void Present() => StopReplay();
 
     /// <summary>The floor could not be drawn: said on the page, on a line of its own that stays.</summary>
     internal void NotDrawn(string why)
@@ -423,7 +593,23 @@ sealed partial class FloorPage
     public void Update(GatewayStatus status)
     {
         _turns.Text = status.AiTurnsToday.ToString(CultureInfo.InvariantCulture);
+        Machine();
         Read();
+    }
+
+    /// <summary>The machine lens's pillars: this computer's parts as they stand now. Read only while that lens is on — it is the app's own list, in memory.</summary>
+    void Machine()
+    {
+        if (_stage.Scene.Reading != FloorLens.Machine) return;
+        Safely(() => _stage.Scene.Parts([.. _sources.Health().Select(h => new FloorPart(h.Component, h.State switch
+        {
+            HealthState.READY => FloorPartState.Ready,
+            HealthState.STARTING => FloorPartState.Starting,
+            HealthState.DEGRADED or HealthState.PAUSED => FloorPartState.Attention,
+            HealthState.FAILED => FloorPartState.Failed,
+            _ => FloorPartState.Unknown
+        }))]));
+        _stage.Nudge();
     }
 
     // ---- the read, off the UI thread --------------------------------------------------------------------------------------------
@@ -435,12 +621,17 @@ sealed partial class FloorPage
 
         /// <summary>Whether turns are being opened now (<see cref="FloorSources.TurnsOpen"/>).</summary>
         public bool Opening { get; init; }
+
+        /// <summary>Today's spend by unit and class, read only while the money lens is on; null otherwise or where it could not be read.</summary>
+        public IReadOnlyList<UnitClassTotals>? Costs { get; init; }
     }
 
     // What the reads keep between looks. Touched only by the read itself, which never overlaps another.
     GlanceRead? _glance;
     DateTimeOffset _glanceAt, _tapeAt;
     FloorTapeRead? _tape;
+    IReadOnlyList<UnitClassTotals>? _costs;
+    DateTimeOffset _costsAt;
     static readonly TimeSpan TapeEvery = TimeSpan.FromSeconds(15);
     readonly List<FloorMarks> _marks = [];
 
@@ -547,9 +738,16 @@ sealed partial class FloorPage
             _tape = TapeAt(now, TapeStretch);
             _tapeAt = now;
         }
+        // THE MONEY LENS'S READ, only while that lens is on and as often as "At a glance": a figure nobody is looking at is not read.
+        if (_place == MainWindow.Page.Costs && (_costs is null || now - _costsAt >= GlanceEvery))
+        {
+            try { _costs = _sources.Costs(now); }
+            catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException)) { _costs = null; }
+            _costsAt = now;
+        }
         return new Reading(chart, names, open, events, since is null, _glance, _sources.AiRunning(), now, until, null)
         {
-            Tape = _tape, Opening = _sources.TurnsOpen()
+            Tape = _tape, Opening = _sources.TurnsOpen(), Costs = _place == MainWindow.Page.Costs ? _costs : null
         };
     }
 
@@ -582,6 +780,8 @@ sealed partial class FloorPage
             // the page itself is shown it standing.
             _stage.Scene.Lay(new FloorPlan(r.Chart), atOnce: !_laid && !Opens, assembling: !_laid && Opens);
             _laid = true;
+            // What the camera was on may stand somewhere else now, or stand for the first time.
+            Aim();
         }
 
         var loop = r.Glance?.Loop ?? "";
@@ -596,6 +796,7 @@ sealed partial class FloorPage
             .Select(o => o.Mandate.Holder).ToHashSet(StringComparer.Ordinal) ?? [];
         _stage.Scene.Flag(late);
 
+        Lenses(r);
         foreach (var e in r.Events) Happened(e, moving: !r.Backfill);
         if (_seen is null || r.Until > _seen) _seen = r.Until;
         _stage.Scene.Tape(r.Tape is { } tape ? Drawn(tape.Symbol, tape.Bars, r.Now) : null);
@@ -604,6 +805,62 @@ sealed partial class FloorPage
         Feed();
         // The scene was told what the look found; if that was nothing new, no frame is drawn for it.
         _stage.Nudge();
+    }
+
+    /// <summary>
+    /// WHAT THE LENSES DRAW, from the same read every page shows (<c>U-ui-world</c>). The work lens: each open task a thread from the
+    /// seat that gave it to the seat that holds it, its bead as far along as its time is — amber once it is past its deadline — and a
+    /// delivery not yet judged a thread back to its giver, waiting at the giver's end. The money lens: each unit a column as tall as
+    /// its day's spend beside the tallest, with its figure written at its top.
+    /// </summary>
+    void Lenses(Reading r)
+    {
+        var threads = new List<FloorThread>();
+        if (r.Glance is { } glance)
+        {
+            var judged = glance.Deliveries?.Rows.Select(d => d.Mandate.Id).ToHashSet(StringComparer.Ordinal) ?? [];
+            foreach (var open in glance.Mandates?.Rows ?? [])
+            {
+                var m = open.Mandate;
+                if (judged.Contains(m.Id)) continue;
+                var span = (m.Deadline - m.CreatedAt).TotalSeconds;
+                var along = span <= 0 ? 1 : (float)Math.Clamp((r.Now - m.CreatedAt).TotalSeconds / span, 0, 1);
+                var late = open.Status != MandateEventKind.Delivered && r.Now > m.Deadline;
+                // Its bead moves by the minute, not by the second: told the same thread again, the floor draws nothing.
+                threads.Add(new FloorThread(m.Decider, m.Holder, MathF.Round(along * 200) / 200, late ? FloorTone.Caution : FloorTone.Work, false));
+            }
+            foreach (var waits in glance.Deliveries?.Rows ?? [])
+                threads.Add(new FloorThread(waits.Mandate.Holder, waits.Mandate.Decider, 1, FloorTone.Work, true));
+        }
+        _stage.Scene.Threads(threads);
+
+        var columns = new Dictionary<string, FloorColumn>(StringComparer.Ordinal);
+        if (r.Costs is { } costs)
+        {
+            // REAL MONEY IS WHAT A COLUMN'S HEIGHT IS — an API key's spend — and where no unit spent any, the plan's capacity at list
+            // price, said as that. The two are never added and never drawn on one scale.
+            var basis = costs.Any(c => c.BillingClass == BillingClasses.Key && c.Totals.Spent > 0) ? BillingClasses.Key
+                : costs.Any(c => c.BillingClass == BillingClasses.Plan && c.Totals.Spent > 0) ? BillingClasses.Plan : null;
+            var most = basis is null ? 0 : costs.Where(c => c.BillingClass == basis).Max(c => c.Totals.Spent);
+            foreach (var unit in costs.GroupBy(c => c.UnitId, StringComparer.Ordinal))
+            {
+                var of = basis is null ? null : unit.FirstOrDefault(c => c.BillingClass == basis)?.Totals;
+                var unpriced = unit.Sum(c => c.Totals.Unpriced);
+                if (of is { Turns: > 0 } t)
+                {
+                    columns[unit.Key] = new FloorColumn(most <= 0 ? 0 : (float)(t.Spent / most), false)
+                    {
+                        Figure = Labels.Money(t.Spent, _currency), Of = Labels.FloorCostOf(basis!)
+                    };
+                }
+                else if (unpriced > 0)
+                {
+                    // Turns ran here and nobody knows what they cost: an outline and the word, never a column of nothing.
+                    columns[unit.Key] = new FloorColumn(0, true) { Figure = Labels.FloorUnknown, Of = Labels.FloorCostUnpriced(unpriced) };
+                }
+            }
+        }
+        _stage.Scene.Columns(columns);
     }
 
     /// <summary>One recorded event: its sentence is kept, and — unless it is only history being filled in — it is shown happening.</summary>
@@ -698,7 +955,12 @@ sealed partial class FloorPage
 
     void Say(Reading r, string loop)
     {
-        _state.Text = r.Chart.Units.Count == 0 ? Labels.FloorEmpty : loop.Length == 0 ? "" : char.ToUpperInvariant(loop[0]) + loop[1..] + ".";
+        // THE STATE, LARGE, AND ITS REASON UNDER IT: the loop's own sentence, cut at its dash — "stopped — the AI has not been started"
+        // is "Stopped" and, under it, "The AI has not been started." A sentence with no dash is said whole under the floor's name.
+        var (headline, state) = FloorWords.Headline(r.Chart.Units.Count == 0 ? Labels.FloorEmpty : loop);
+        _headline.Text = headline;
+        _state.Text = state;
+        _state.IsVisible = state.Length > 0;
         _working.Text = Labels.FloorWorking([.. _openSince.OrderBy(o => o.Value).Select(o => FloorWords.Who(o.Key, _names))]);
         _working.IsVisible = r.Chart.Units.Count > 0;
 
@@ -761,7 +1023,7 @@ sealed partial class FloorPage
             {
                 row.Background = Brushes.Transparent;
                 row.Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand);
-                row.PointerPressed += (_, _) => { _chosen = about; Mark(); Feed(); };
+                row.PointerPressed += (_, _) => { _chosen = about; Mark(); Feed(); Aim(); };
             }
             if (i == 0 && arrived) ComeIn(row);
             _feed.Children.Add(row);
@@ -829,11 +1091,19 @@ sealed partial class FloorPage
             cells[cell.Id] = new Rect(minX, minY, maxX - minX, maxY - minY).Inflate(9);
         }
 
-        var stage = new Rect(_stage.Bounds.Size).Deflate(8);
+        // CAPTIONS KEEP TO THE FLOOR'S OWN SHARE OF THE WINDOW: not under a sheet, not under the dock. A working cell the camera has
+        // left under the glass keeps its light, and its words wait until it is in the clear again.
+        var stage = new Rect(8, 8, Math.Max(40, _stage.Bounds.Width - _reserveRight - 16), Math.Max(40, _stage.Bounds.Height - _reserveBottom - 16));
         var placed = new List<Rect>();
+
         foreach (var id in wanted)
         {
             if (!cells.TryGetValue(id, out var box)) continue;
+            if (!stage.Contains(box.Center))
+            {
+                if (_captionOf.TryGetValue(id, out var away)) away.Panel.IsVisible = false;
+                continue;
+            }
             if (!_captionOf.TryGetValue(id, out var caption))
             {
                 var name = new TextBlock { FontSize = Theme.Small, FontWeight = FontWeight.SemiBold, Foreground = Theme.Text };

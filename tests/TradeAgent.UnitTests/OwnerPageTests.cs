@@ -785,10 +785,12 @@ public class EarlierArmedHomeTests
             Assert.True(gw.Settings.AiTradingStopped);
             var earlier = Assert.IsType<TradeAgent.Core.Board.EarlierLiveSetting>(gw.EarlierLiveSetting);
 
-            // THE WINDOW'S OWN STRIP, outside the page host, built with the shell and updated first on every tick.
+            // THE WINDOW'S OWN STRIP, outside every page (U-ui-world: above the sheet, in the column of what outranks every page, and first
+            // in it), built with the shell before anything is shown, and updated first on every tick.
             var window = File.ReadAllText(Path.Combine(Repo(), "src", "TradeAgent.App", "MainWindow.cs"));
-            var shell = window[window.IndexOf("void EnsureShell()", StringComparison.Ordinal)..window.IndexOf("Control BuildHeader()", StringComparison.Ordinal)];
-            Assert.Contains("_shellSurface.Children.Add(Ui.With(BuildEarlierArmedStrip(), c => c[Grid.RowProperty] = 1));", shell, StringComparison.Ordinal);
+            var shell = window[window.IndexOf("void EnsureShell()", StringComparison.Ordinal)..window.IndexOf("void Lay()", StringComparison.Ordinal)];
+            Assert.Contains("_notices.Children.Add(BuildEarlierArmedStrip());", shell, StringComparison.Ordinal);
+            Assert.True(shell.IndexOf("BuildEarlierArmedStrip()", StringComparison.Ordinal) < shell.IndexOf("BuildOversightBanner()", StringComparison.Ordinal));
             Assert.True(shell.IndexOf("BuildEarlierArmedStrip()", StringComparison.Ordinal) < shell.IndexOf("Select(Page.Floor);", StringComparison.Ordinal));
             var update = window[window.IndexOf("void UpdateShell(GatewayStatus status)", StringComparison.Ordinal)..];
             Assert.Contains("_earlierArmed?.Update();", update[..update.IndexOf("_modePillHost", StringComparison.Ordinal)], StringComparison.Ordinal);

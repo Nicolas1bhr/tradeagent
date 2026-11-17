@@ -87,6 +87,12 @@ sealed class SettingsPage
     readonly TextBlock _dataValue = Ui.Mono("—");
     readonly TextBlock _dataNote = Ui.Muted("");
     readonly Control _dataBusy = Ui.Busy("Collecting months from Binance's public archive.");
+
+    /// <summary>
+    /// HOW FAR THE DOWNLOAD HAS COME, DRAWN (<c>U-ui-world</c>): the collector's own fraction where it gives one, an empty line where it
+    /// does not — never a guess. Shown only while a collection runs, under the sentence it reports.
+    /// </summary>
+    readonly Meter _dataProgress = new() { IsVisible = false, HorizontalAlignment = HorizontalAlignment.Left, Width = Theme.LineMeasureWidth };
     readonly Button _collect;
 
     /// <summary>The live series as it stands: how many bars, how old the newest one is, any holes.</summary>
@@ -210,8 +216,8 @@ sealed class SettingsPage
         _paperFrictionValue.TextWrapping = TextWrapping.Wrap;
         _paperFrictionNote.IsVisible = false;
 
-        var platform = Ui.Section("Trading platform", Ui.Col(Theme.S4,
-            Ui.KeyValueLive("Platform in use", _platformValue),
+        var platform = Ui.Part("Trading platform", Ui.Col(Theme.S4,
+            Ui.Fact("Platform in use", _platformValue),
             _platformNote,
             _switchBusy,
             Ui.Divider(),
@@ -240,8 +246,8 @@ sealed class SettingsPage
         _platformNote.IsVisible = false;
         _accountNote.IsVisible = false;
 
-        var account = Ui.Section("Account", Ui.Col(Theme.S4,
-            Ui.KeyValueLive("Account in use", _accountValue),
+        var account = Ui.Part("Account", Ui.Col(Theme.S4,
+            Ui.Fact("Account in use", _accountValue),
             _accountNote,
             Ui.Divider(),
             _accountBusy,
@@ -291,14 +297,11 @@ sealed class SettingsPage
         _gdeltNews.HorizontalAlignment = HorizontalAlignment.Left;
 
         var marketData = Ui.Section("Market data", Ui.Col(Theme.S4,
-            Ui.KeyValueLive("History TradeAgent holds", _dataValue),
-            _dataNote,
+            Ui.Fact("History TradeAgent holds", _dataValue),
+            Ui.Form("Pair", _dataPair, "Upper-case letters and digits, as Binance writes it — BTCUSDT, ETHUSDT.", _collect),
+            Ui.Col(Theme.S2, _dataBusy, _dataProgress, _dataNote),
             Ui.Divider(),
-            Ui.FieldRow("Pair", _dataPair, "Upper-case letters and digits, as Binance writes it — BTCUSDT, ETHUSDT."),
-            _collect,
-            _dataBusy,
-            Ui.Divider(),
-            Ui.KeyValueLive("Instrument check", _instrumentValue),
+            Ui.Fact("Instrument check", _instrumentValue),
             _checkInstrument,
             Ui.Muted("TradeAgent reads the pair's price step and size step from Binance's own published instrument "
                      + "definition, at Binance's own address — when it starts, every six hours while it runs, when you "
@@ -310,7 +313,7 @@ sealed class SettingsPage
                      + "that moment — not that every order sized to it would be accepted, and not that a size clears "
                      + "Binance's minimum order value, which TradeAgent records and does not yet apply."),
             Ui.Divider(),
-            Ui.KeyValueLive("Live bars TradeAgent has collected", _liveValue),
+            Ui.Fact("Live bars TradeAgent has collected", _liveValue),
             _liveBars,
             Ui.Muted("While TradeAgent is running it also collects that pair's CLOSED 1-minute bars as they happen, "
                      + "from Binance's market-data-only host — the one that serves public data and accepts no "
@@ -379,12 +382,12 @@ sealed class SettingsPage
         // capital, and a value that ran off the card would hide the half that says which is assumed.
         _judgeValue.TextWrapping = TextWrapping.Wrap;
 
-        var holdout = Ui.Section("Private evaluation evidence", Ui.Col(Theme.S4,
-            Ui.KeyValueLive("Held back", _holdoutValue),
-            Ui.KeyValueLive("Judged under", _judgeValue),
+        var holdout = Ui.Part("Private evaluation evidence", Ui.Col(Theme.S4,
+            Ui.Fact("Held back", _holdoutValue),
+            Ui.Fact("Judged under", _judgeValue),
             _holdoutNote,
             Ui.Divider(),
-            Ui.FieldRow("From", _holdoutFrom,
+            Ui.Form("From", _holdoutFrom,
                 "A date, or a date and time, in UTC — 2026-06-01 or 2026-06-01T00:00:00Z. The bar at that " +
                 "instant is already held back."),
             _holdoutLength,
@@ -418,10 +421,10 @@ sealed class SettingsPage
         _whatsNew.IsVisible = false;
         _installUpdate.IsVisible = false;
 
-        var updates = Ui.Section("Updates", Ui.Col(Theme.S4,
-            Ui.KeyValueLive("This version", _versionValue),
-            Ui.KeyValueLive("Newest published version", _newestValue),
-            Ui.KeyValueLive("Automatic checks", _autoValue),
+        var updates = Ui.Part("Updates", Ui.Col(Theme.S4,
+            Ui.Fact("This version", _versionValue),
+            Ui.Fact("Newest published version", _newestValue),
+            Ui.Fact("Automatic checks", _autoValue),
             _updateNote,
             Ui.Wrap(Theme.S2, _checkNow, _whatsNew, _installUpdate, _autoToggle),
             Ui.Divider(),
@@ -434,7 +437,7 @@ sealed class SettingsPage
 
         // The right-hand column answers the question this page raises and nothing else answers:
         // what does pressing one of these actually do to my money and my open orders?
-        var explain = Ui.Section("What these change", Ui.Col(Theme.S3,
+        var explain = Ui.Part("What these change", Ui.Col(Theme.S3,
             Ui.Body("The platform is where orders actually go. TradeAgent paper and the practice simulator are built into " +
                     "TradeAgent and risk nothing, and the AI team's strategies only run on paper. ATAS is your own trading program on this computer."),
             Ui.Divider(),
@@ -452,7 +455,7 @@ sealed class SettingsPage
         // but an owner who has just been told by ATAS, or by a support message, to put the bridge
         // back needs somewhere it is always found. Settings is where the other two standing choices
         // about the trading platform already live.
-        var bridge = Ui.Section("ATAS bridge", BridgeRepair.Body(_host));
+        var bridge = Ui.Part("ATAS bridge", BridgeRepair.Body(_host));
 
         // THE OWNER'S SECTIONS LIVE ON HIS PAGE (U-settings-shed item 3; R24 § 4.7): the platform, the account and the bridge under
         // Connections, what a paper fill pays and the holdout under Evidence, and updates. This page builds them — their handlers and
@@ -461,7 +464,7 @@ sealed class SettingsPage
         Platform = platform;
         Account = account;
         Bridge = bridge;
-        Friction = Ui.Section("What a paper fill pays", PaperFrictionRow());
+        Friction = Ui.Part("What a paper fill pays", PaperFrictionRow());
         Holdout = holdout;
         Updates = updates;
         WhatTheseChange = explain;
@@ -486,10 +489,10 @@ sealed class SettingsPage
     /// limit — it is how the simulation is priced, and the place an owner reads about the simulation.
     /// </summary>
     Control PaperFrictionRow() => Ui.Col(Theme.S2,
-        Ui.KeyValueLive("Fills pay", _paperFrictionValue),
-        Ui.FieldRow("Your fee per fill, in %", WithReading(_paperFee, _paperFeeReading),
+        Ui.Fact("Fills pay", _paperFrictionValue),
+        Ui.Form("Your fee per fill, in %", WithReading(_paperFee, _paperFeeReading),
             "Leave it empty to pay the venue's published standard fee — what TradeAgent's own judge charges."),
-        Ui.FieldRow("Your slippage per fill, in %", WithReading(_paperSlippage, _paperSlippageReading),
+        Ui.Form("Your slippage per fill, in %", WithReading(_paperSlippage, _paperSlippageReading),
             "Leave it empty to use TradeAgent's assumption of two basis points, which is not a measurement."),
         Ui.Wrap(Theme.S2, _paperFrictionSave, _paperFrictionClear),
         _paperFrictionNote,
@@ -597,8 +600,11 @@ sealed class SettingsPage
         new() { FontSize = Theme.Small, Foreground = Theme.TextMuted, TextWrapping = TextWrapping.Wrap };
 
     /// <summary>A box with its reading line under it, as wide as the box.</summary>
-    static Control WithReading(TextBox box, TextBlock reading) =>
-        Ui.With(Ui.Col(Theme.S1, box, reading), c => c.Width = Theme.FieldWidth);
+    static Control WithReading(TextBox box, TextBlock reading)
+    {
+        box.HorizontalAlignment = HorizontalAlignment.Left;
+        return Ui.With(Ui.Col(Theme.S1, box, reading), c => c.HorizontalAlignment = HorizontalAlignment.Left);
+    }
 
     /// <summary>
     /// THE FIGURE IS SHOWN BEFORE THE PRESS (<c>U-number-entry-culture</c>, fix pass 1), on the two boxes whose empty has a meaning of its
@@ -636,7 +642,7 @@ sealed class SettingsPage
     /// </summary>
     static Control Option(string title, Control? badge, Control inUse, string body, Button action)
     {
-        var heading = Ui.Row(Theme.S3, Ui.H2(title));
+        var heading = Ui.Row(Theme.S3, Ui.H3(title));
         if (badge is not null) heading.Children.Add(badge);
         heading.Children.Add(inUse);
 
@@ -684,6 +690,7 @@ sealed class SettingsPage
                 _dataNote.IsVisible = true;
                 _dataNote.Foreground = Theme.TextMuted;
                 _dataNote.Text = p.Message;
+                _dataProgress.Set(p.Fraction);
             }));
 
             var result = await Task.Run(() => _host.MarketData.CollectAsync(pair, DateTimeOffset.UtcNow, progress));
@@ -713,6 +720,8 @@ sealed class SettingsPage
     void ApplyMarketData()
     {
         _dataBusy.IsVisible = _collecting;
+        _dataProgress.IsVisible = _collecting;
+        if (!_collecting) _dataProgress.Set(null);
         _collect.IsEnabled = !_collecting;
         _dataPair.IsEnabled = !_collecting;
 

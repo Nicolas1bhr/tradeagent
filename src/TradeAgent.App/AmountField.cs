@@ -35,8 +35,14 @@ public sealed class AmountField : StackPanel
         Spacing = Palette.S1;
         Width = Palette.FieldWidth;
         // NULL OPENS EMPTY — a figure not known yet (fix pass 2): the box reads as nothing and its press refuses, never 0.
-        Box = new TextBox { Text = value is { } v ? Amount.Draw(v) : "", FontFamily = Palette.Mono, FontSize = Palette.Base };
-        Reading = new TextBlock { FontSize = Palette.Small, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap };
+        // THE FIGURE IN THE TEXT FACE WITH TABULAR DIGITS (U-ui-world): what is typed is read as typed, digit under digit, in the same
+        // letters as the page round it — the mono face was the one other typeface on the owner's pages.
+        Box = new TextBox
+        {
+            Text = value is { } v ? Amount.Draw(v) : "", FontFamily = Palette.Sans, FontSize = Palette.Base, FontFeatures = Palette.Tabular,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch
+        };
+        Reading = new TextBlock { FontSize = Palette.Micro, Foreground = Palette.TextMuted, TextWrapping = TextWrapping.Wrap };
         Children.Add(Box);
         Children.Add(Reading);
         Read();

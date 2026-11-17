@@ -25,23 +25,23 @@ public class OrgSurfaceShellTests
     }
 
     /// <summary>
-    /// (a) THE RAIL LISTS THE PAGES IN ORDER: the floor (<c>U-ui-alive</c>), Chat, then Organisation, Work and Costs under the words the labels spell, before every older page —
-    /// and each is built into the page host and refreshed by the window's own tick, so a page in the rail is a page that exists and is kept current.
+    /// (a) THE ORGANISATION'S PAGES ARE LEAVES OF THE FLOOR (<c>U-ui-world</c>; the rail these rows once read is gone): Organisation, Work and
+    /// Costs, under the words the labels spell, stand beside the floor's own overview in the dock — three ways of reading the one organisation —
+    /// and each is built onto the sheet and refreshed by the window's own tick, so a page that can be gone to is a page that exists and is kept current.
     /// A source assertion, as the two-press factories' is (<c>TwoPressGrantTests</c>): the window itself needs a platform no unit test has.
-    /// RED at base: the rail held Chat, Dashboard and the older pages only.
     /// </summary>
     [Fact]
-    public void The_rail_lists_the_pages_in_order()
+    public void The_organisations_pages_are_leaves_of_the_floor_built_and_kept_current()
     {
         var text = Source("MainWindow.cs");
-        var entries = MainWindow.Rail.Select(r => (Page: r.Page.ToString(), Label: r.Label)).ToList();
+        var floor = Places.All.Single(p => p.Place == Place.Floor);
 
-        Assert.Equal(new[] { "Floor", "Chat", "Organisation", "Work", "Costs" }, entries.Take(5).Select(e => e.Page));
-        Assert.Equal(new[] { Labels.NavFloor, "Chat", Labels.NavOrganisation, Labels.NavWork, Labels.NavCosts }, entries.Take(5).Select(e => e.Label));
+        Assert.Equal(new[] { "Floor", "Organisation", "Work", "Costs" }, floor.Leaves.Select(l => l.Page.ToString()));
+        Assert.Equal(new[] { Labels.PlaceOverview, Labels.NavOrganisation, Labels.NavWork, Labels.NavCosts }, floor.Leaves.Select(l => l.Word));
         Assert.Equal(new[] { "Organisation", "Work", "Costs" }, new[] { Labels.NavOrganisation, Labels.NavWork, Labels.NavCosts });
-        Assert.Equal(entries.Count, entries.Select(e => e.Page).Distinct().Count());   // no page twice
+        Assert.Equal(Labels.NavFloor, floor.Name);
 
-        // BUILT, PLACED AND KEPT CURRENT: the page is made, put in the host and updated by the window's tick.
+        // BUILT, PLACED AND KEPT CURRENT: the page is made, put on the sheet and updated by the window's tick.
         foreach (var (page, type, field) in new[] { ("Organisation", "OrganisationPage", "_organisation"), ("Work", "WorkPage", "_work"), ("Costs", "CostsPage", "_costs") })
         {
             Assert.Contains($"{field} = new {type}(", text, StringComparison.Ordinal);

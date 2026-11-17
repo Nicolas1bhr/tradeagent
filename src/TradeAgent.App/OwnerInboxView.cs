@@ -81,12 +81,12 @@ sealed class OwnerInboxPage
 
     readonly TextBlock _unreadable = Ui.With(Ui.Body("", Theme.Caution), t => t.IsVisible = false);
 
-    internal readonly StackPanel EscalationCards = new() { Spacing = Theme.S3 };
-    internal readonly StackPanel OwedCards = new() { Spacing = Theme.S3 };
-    internal readonly StackPanel PowerCards = new() { Spacing = Theme.S3 };
-    internal readonly StackPanel BoardVetoCards = new() { Spacing = Theme.S3 };
-    internal readonly StackPanel StructureVetoCards = new() { Spacing = Theme.S3 };
-    internal readonly StackPanel ActivateCards = new() { Spacing = Theme.S3 };
+    internal readonly StackPanel EscalationCards = new() { Spacing = Theme.S5 };
+    internal readonly StackPanel OwedCards = new() { Spacing = Theme.S5 };
+    internal readonly StackPanel PowerCards = new() { Spacing = Theme.S5 };
+    internal readonly StackPanel BoardVetoCards = new() { Spacing = Theme.S5 };
+    internal readonly StackPanel StructureVetoCards = new() { Spacing = Theme.S5 };
+    internal readonly StackPanel ActivateCards = new() { Spacing = Theme.S5 };
 
     readonly TextBlock _escalationsRefused = Caution();
     readonly TextBlock _structureRefused = Caution();
@@ -94,6 +94,10 @@ sealed class OwnerInboxPage
     readonly TextBlock _structureVetoNote = Ui.With(Ui.Micro(""), t => t.IsVisible = false);
     readonly TextBlock _activateNote = Ui.With(Ui.Micro(""), t => t.IsVisible = false);
     readonly TextBlock _activateWhose = Ui.Muted(Labels.ActivateIsYoursUntilTheBoard);
+
+    /// <summary>THE PAGE'S TWO FIGURES (U-ui-world): how many items wait on a press of his, and how many reached him as records — "–" until read.</summary>
+    readonly TextBlock _waiting = Ui.FigureText(), _records = Ui.FigureText();
+    int? _waitingCount, _recordCount;
 
     internal readonly LiveList<EscalationRow> Escalations;
     internal readonly LiveList<OwedOwnerWord> Owed;
@@ -120,21 +124,23 @@ sealed class OwnerInboxPage
             e => e.EventId.ToString(System.Globalization.CultureInfo.InvariantCulture), StructureVetoCard);
         Dormant = new LiveList<OrgPositionRow>(ActivateCards, Ui.Muted(Labels.ForYouActivateNone), p => p.Id, DormantCard);
 
-        var left = Ui.Col(Theme.S6,
-            _unreadable,
-            Ui.Section(Labels.ForYouEscalations, Ui.Col(Theme.S3, Ui.Muted(Labels.ForYouEscalationsAreRecords), _escalationsRefused, EscalationCards)),
+        // ONE COLUMN, WHAT WAITS ON HIM FIRST (U-ui-world): how many things wait on a press of his and how many only reached him as a
+        // record, set large; then his presses, each item held by a rule of light; then what he reads, each held by the pane's hairline.
+        var yours = Ui.Col(Theme.S8,
+            Ui.Section(Labels.ForYouBoardVetoes, Ui.Col(Theme.S4, Ui.Micro(Labels.VetoBoardActWhat), _boardVetoNote, BoardVetoCards)),
+            Ui.Section(Labels.ForYouStructureVetoes, Ui.Col(Theme.S4, _structureRefused, _structureVetoNote, StructureVetoCards)),
+            Ui.Section(Labels.ForYouActivate, Ui.Col(Theme.S4, _activateWhose, _activateNote, ActivateCards)));
+        var reading = Ui.Col(Theme.S8,
+            Ui.Section(Labels.ForYouEscalations, Ui.Col(Theme.S4, Ui.Muted(Labels.ForYouEscalationsAreRecords), _escalationsRefused, EscalationCards)),
             Ui.Section(Labels.ForYouOwed, OwedCards),
             Ui.Section(Labels.ForYouPower, PowerCards));
-        var right = Ui.Col(Theme.S6,
-            Ui.Section(Labels.ForYouBoardVetoes, Ui.Col(Theme.S3, Ui.Micro(Labels.VetoBoardActWhat), _boardVetoNote, BoardVetoCards)),
-            Ui.Section(Labels.ForYouStructureVetoes, Ui.Col(Theme.S3, _structureRefused, _structureVetoNote, StructureVetoCards)),
-            Ui.Section(Labels.ForYouActivate, Ui.Col(Theme.S3, _activateWhose, _activateNote, ActivateCards)));
-        right.Margin = new Avalonia.Thickness(Theme.S5, 0, 0, 0);
-
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,*") };
-        grid.Children.Add(Pages.Column(0, left));
-        grid.Children.Add(Pages.Column(1, right));
-        Root = Pages.Scroll(Ui.Col(0, Pages.Header(Labels.NavForYou, Labels.ForYouSubtitle), grid));
+        Root = Pages.Scroll(Ui.Col(0, Pages.Header(Labels.NavForYou, Labels.ForYouSubtitle),
+            Ui.Col(Theme.S10,
+                Ui.Col(Theme.S4,
+                    _unreadable,
+                    Ui.Figures(Ui.Figure(_waiting, Ui.WaitingOnYou), Ui.Figure(_records, Ui.RecordsForYou))),
+                Ui.Part(Ui.YoursToDecide, yours),
+                Ui.Part(Ui.OnlyRecords, reading))));
 
         Update();
     }
@@ -154,6 +160,7 @@ sealed class OwnerInboxPage
     public void Update()
     {
         var failures = new List<string>();
+        _waitingCount = _recordCount = 0;
         var org = Try(_sources.Org, failures);
         var events = Try(_sources.Events, failures);
         var board = Try(_sources.Board, failures);
@@ -164,25 +171,40 @@ sealed class OwnerInboxPage
             {
                 var esc = org.EscalationsToOwner();
                 Escalations.Update(esc.Rows);
+                _recordCount += esc.Rows.Count;
                 Show(_escalationsRefused, esc.Refused);
             }, failures);
             Read(() =>
             {
                 var vetoable = org.Vetoable();
                 StructureVetoes.Update(_sources.VetoStructure is null ? [] : vetoable.Rows);
+                _waitingCount += _sources.VetoStructure is null ? 0 : vetoable.Rows.Count;
                 Show(_structureRefused, vetoable.Refused);
             }, failures);
         }
-        if (events is not null) Read(() => Owed.Update(events.OwnerWordsOwed()), failures);
+        if (events is not null)
+            Read(() =>
+            {
+                var owed = events.OwnerWordsOwed();
+                Owed.Update(owed);
+                _recordCount += owed.Count;
+            }, failures);
         if (board is not null)
         {
-            Read(() => Power.Update(board.PowerProposals()), failures);
+            Read(() =>
+            {
+                var power = board.PowerProposals();
+                Power.Update(power);
+                _recordCount += power.Count;
+            }, failures);
             Read(() =>
             {
                 var preview = _sources.PreviewVeto;
-                BoardVetoes.Update(preview is null || _sources.VetoAct is null
+                IReadOnlyList<(BoardActRecord, BoardVetoPreview)> vetoable = preview is null || _sources.VetoAct is null
                     ? []
-                    : [.. board.Acts().Select(a => (a, preview(a.Act.Id))).Where(x => x.Item2.Allowed)]);
+                    : [.. board.Acts().Select(a => (a, preview(a.Act.Id))).Where(x => x.Item2.Allowed)];
+                BoardVetoes.Update(vetoable);
+                _waitingCount += vetoable.Count;
             }, failures);
         }
 
@@ -197,8 +219,15 @@ sealed class OwnerInboxPage
                 _names = OrgNames.Of(units, positions);
                 var chief = units.FirstOrDefault(u => u.IsRoot)?.HeadPositionId;
                 var open = units.Where(u => u.Status != OrgUnitStatus.Closed).Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
-                Dormant.Update([.. positions.Where(p => p.Status == OrgPositionStatus.Dormant && p.Id != chief && open.Contains(p.UnitId))]);
+                IReadOnlyList<OrgPositionRow> dormant = [.. positions.Where(p => p.Status == OrgPositionStatus.Dormant && p.Id != chief && open.Contains(p.UnitId))];
+                Dormant.Update(dormant);
+                _waitingCount += dormant.Count;
             }, failures);
+
+        // A COUNT WITH A PART UNREAD IS NOT A COUNT: either figure is a dash once anything failed to read, never a smaller number.
+        if (failures.Count > 0) _waitingCount = _recordCount = null;
+        OrgText.Set(_waiting, _waitingCount is { } w ? w.ToString(System.Globalization.CultureInfo.InvariantCulture) : "–");
+        OrgText.Set(_records, _recordCount is { } r ? r.ToString(System.Globalization.CultureInfo.InvariantCulture) : "–");
 
         _unreadable.IsVisible = failures.Count > 0;
         OrgText.Set(_unreadable, failures.Count > 0 ? Labels.SurfaceUnreadable(string.Join("; ", failures.Distinct())) : "");
@@ -235,7 +264,7 @@ sealed class OwnerInboxPage
             OrgText.Set(reason, OrgText.Claim(e.Sender, e.Reason));
             OrgText.Set(skipped, Labels.EscalationSkipped(e.Skipped));
         }
-        return (Ui.Col(Theme.S1, from, reason, skipped), Fill);
+        return (Ui.Item(Ui.Col(Theme.S1, from, reason, skipped), waits: false), Fill);
     }
 
     (Control, Action<OwedOwnerWord>) OwedCard(OwedOwnerWord first)
@@ -250,7 +279,7 @@ sealed class OwnerInboxPage
             OrgText.Set(why, Labels.OwedWhy(w.Addressee, w.BlockedWhy, w.TakenBy));
             why.Foreground = w.BlockedWhy is null ? Theme.TextFaint : Theme.Caution;
         }
-        return (Ui.Col(Theme.S1, to, said, why), Fill);
+        return (Ui.Item(Ui.Col(Theme.S1, to, said, why), waits: false), Fill);
     }
 
     (Control, Action<BoardPowerProposalRow>) PowerCard(BoardPowerProposalRow first)
@@ -262,7 +291,7 @@ sealed class OwnerInboxPage
             OrgText.Set(from, Labels.PowerFrom(p.Seat, p.Target, When(p.At)));
             OrgText.Set(text, OrgText.Claim(p.Seat, p.Text));
         }
-        return (Ui.Col(Theme.S1, from, text, Ui.Micro(Labels.PowerAppliedByNothing)), Fill);
+        return (Ui.Item(Ui.Col(Theme.S1, from, text, Ui.Micro(Labels.PowerAppliedByNothing)), waits: false), Fill);
     }
 
     // ---- the cards: the owner's presses ---------------------------------------------------------------------------------------------
@@ -299,7 +328,9 @@ sealed class OwnerInboxPage
             OrgText.Set(restores, string.Join("\n", a.Preview.Fields.Select(f => Labels.VetoField(f.Field, f.Now, f.Restored)).Prepend(a.Preview.Words)));
             restores.IsVisible = Ui.IsArmed(press);
         }
-        return (Ui.Col(Theme.S1, title, status, intent, rationale, restores, press), Fill);
+        intent.Foreground = Theme.TextMuted;
+        press.Margin = new Avalonia.Thickness(0, Theme.S2, 0, 0);
+        return (Ui.Item(Ui.Col(Theme.S1, title, status, intent, rationale, restores, press), waits: true), Fill);
     }
 
     /// <summary>A STRUCTURAL CHANGE HIS VETO WOULD ACCEPT: what was decided, by whom, what the veto would do — and two presses.</summary>
@@ -316,7 +347,8 @@ sealed class OwnerInboxPage
             OrgText.Set(title, Labels.StructureEventTitle(e.EventId, e.Kind, OrgEnvelopes.NameOf(e.UnitId), e.PositionId, e.Decider, When(e.At)));
             OrgText.Set(words, e.Words);
         }
-        return (Ui.Col(Theme.S1, title, words, press), Fill);
+        press.Margin = new Avalonia.Thickness(0, Theme.S2, 0, 0);
+        return (Ui.Item(Ui.Col(Theme.S1, title, words, press), waits: true), Fill);
     }
 
     /// <summary>A DORMANT POSITION, NOT THE CHIEF: his two-press activation, a board seat active or not.</summary>
@@ -329,7 +361,8 @@ sealed class OwnerInboxPage
         press.HorizontalAlignment = HorizontalAlignment.Left;
         // IN THE CHART'S NAMES (U-owner-words-2): the card read "pos-…, dormant in unit team-…".
         void Fill(OrgPositionRow p) => OrgText.Set(title, Labels.DormantPosition(_names.Position(p.Id), _names.Unit(p.UnitId)));
-        return (Ui.Col(Theme.S1, title, press), Fill);
+        press.Margin = new Avalonia.Thickness(0, Theme.S2, 0, 0);
+        return (Ui.Item(Ui.Col(Theme.S1, title, press), waits: true), Fill);
     }
 
     /// <summary>

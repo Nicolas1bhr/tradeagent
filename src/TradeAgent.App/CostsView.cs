@@ -58,6 +58,12 @@ sealed record CostUnitWords(string Id, int Depth, string Title, string Plan, str
     /// "none today" lines per unit hid the one figure that mattered among them.
     /// </summary>
     public IReadOnlyList<string> Shown { get; init; } = [Plan, Key, Unknown];
+
+    /// <summary>
+    /// THE FIGURES BEHIND THE LINES (<c>U-ui-world</c>): the ledger's totals of this unit's day for each class it has turns in, keyed by class —
+    /// the very numbers the lines above say, so the page draws them without reading a sentence back. A class absent here ran no turn today.
+    /// </summary>
+    public IReadOnlyDictionary<string, AiAttemptTotals> Day { get; init; } = new Dictionary<string, AiAttemptTotals>();
 }
 
 /// <summary>
@@ -92,7 +98,9 @@ sealed record CostsWords(string Status, string Window, IReadOnlyList<CostUnitWor
                 return new CostUnitWords(t.Unit.Id, t.Depth, names.Unit(t.Unit.Id), lines[0], lines[1], lines[2])
                 {
                     Shown = [.. shown.Count > 0 ? shown : [Labels.CostsNothingToday], .. basis.Length > 0 ? new[] { basis } : []],
-                    Basis = basis
+                    Basis = basis,
+                    Day = rows.Where(r => r.Totals is not null).GroupBy(r => r.BillingClass, StringComparer.Ordinal)
+                        .ToDictionary(g => g.Key, g => g.First().Totals, StringComparer.Ordinal)
                 };
             })
             .ToList();
@@ -154,16 +162,28 @@ sealed record CostsWords(string Status, string Window, IReadOnlyList<CostUnitWor
 /// nobody established — with the turns whose cost is unknown named and never added as zero. <b>It only reads</b>: the limits these figures are
 /// held against are not shown or set here.
 ///
-/// <para><b>Built once, updated in place.</b> The skeleton is made in the constructor; a unit's card is made the first time its id is seen and kept
-/// (<see cref="LiveList{T}"/>), and a refresh writes new text into the same three text blocks.</para>
+/// <para><b>Drawn on glass (<c>U-ui-world</c>).</b> At the top, the organisation's day set large, one figure per class — three figures, never one
+/// sum, and a cost nobody knows said as unknown, never as 0 — taken from the root unit, whose figure includes every unit below it. Then the
+/// chart as an indented tree: each unit's classes as lines, each line as long as its share of the largest unit's figure in that class (the
+/// root's, since a unit includes the units below it), its figure and turns beside it; under it, quiet, every sentence the page said before.</para>
+///
+/// <para><b>Built once, updated in place.</b> The skeleton is made in the constructor; a unit's row is made the first time its id is seen and kept
+/// (<see cref="LiveList{T}"/>), and a refresh writes new text into the same text blocks and new lengths into the same lines.</para>
 /// </summary>
 sealed class CostsPage
 {
+    static readonly string[] Classes = [BillingClasses.Key, BillingClasses.Plan, BillingClasses.Unknown];
+
     readonly OrgSurfaceSources _src;
     readonly TextBlock _status = Ui.Muted("");
     readonly TextBlock _window = Ui.With(Ui.Muted(""), t => t.FontSize = Theme.Small);
-    readonly StackPanel _units = new() { Spacing = Theme.S3 };
+    readonly StackPanel _units = new();
     readonly LiveList<CostUnitWords> _list;
+    readonly Control _figures;
+    readonly Control _unitsPart;
+    readonly (TextBlock AtLeast, TextBlock Figure, TextBlock Turns)[] _today;
+    readonly Dictionary<string, decimal> _largest = new(StringComparer.Ordinal);
+    string _currency = "";
 
     public Control Root { get; }
 
@@ -180,7 +200,30 @@ sealed class CostsPage
         _status.Text = Labels.SurfaceNotRead;
         _list = new LiveList<CostUnitWords>(_units, Ui.Muted(Labels.CostsNoUnits), u => u.Id, MakeUnit);
 
-        var body = Ui.Col(Theme.S4, _status, _window, _units);
+        // TODAY, SET LARGE: one column per class, real money first. The three are never added: each is its own figure.
+        _today = new (TextBlock, TextBlock, TextBlock)[Classes.Length];
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,*,*") };
+        for (var i = 0; i < Classes.Length; i++)
+        {
+            var atLeast = Ui.With(Ui.Micro(Ui.AtLeast), t => t.IsVisible = false);
+            var figure = Ui.FigureLarge(Theme.CostFigure, Theme.CostFigureLine);
+            figure.Text = "–";
+            if (i > 0) figure.Foreground = Theme.TextMuted;
+            var turns = Ui.Quiet();
+            var column = Ui.Col(2, atLeast, figure, turns, Ui.With(Ui.Micro(Ui.CostFigureCaption(Classes[i])), t => t.Margin = new Avalonia.Thickness(0, Theme.S1, 0, 0)));
+            column.Margin = new Avalonia.Thickness(0, 0, i < Classes.Length - 1 ? Theme.S5 : 0, 0);
+            column[Grid.ColumnProperty] = i;
+            grid.Children.Add(column);
+            _today[i] = (atLeast, figure, turns);
+        }
+        _figures = grid;
+        _figures.IsVisible = false;
+
+        _unitsPart = Ui.Col(Theme.S2, Ui.Eyebrow(Ui.CostsUnitsHeading), _units);
+        var body = Ui.Col(Theme.S8,
+            _status,
+            Ui.Col(Theme.S4, _window, _figures),
+            _unitsPart);
         var scroll = Pages.Scroll(body);
         scroll[Grid.RowProperty] = 1;
         var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*") };
@@ -215,27 +258,82 @@ sealed class CostsPage
         _status.IsVisible = words.Status.Length > 0;
         OrgText.Set(_window, words.Window);
         _window.IsVisible = words.Window.Length > 0;
-        if (read) _list.Update(words.Units);   // a failed read leaves the last cards; the status above says nothing below is current
+        if (!read) return;   // a failed read leaves the last figures and rows; the status above says nothing below is current
+
+        _currency = _src.Currency();
+        // THE LONGEST LINE OF EACH CLASS: the largest unit's figure in it — the root's, since a unit's figure includes the units below it.
+        _largest.Clear();
+        foreach (var c in Classes)
+            _largest[c] = words.Units.Select(u => u.Day.TryGetValue(c, out var t) ? t.Spent : 0m).DefaultIfEmpty(0m).Max();
+
+        var root = words.Units.FirstOrDefault(u => u.Depth == 0);
+        _figures.IsVisible = root is not null;
+        if (root is not null)
+            for (var i = 0; i < Classes.Length; i++)
+            {
+                var t = root.Day.TryGetValue(Classes[i], out var got) ? got : null;
+                OrgText.Set(_today[i].Figure, Ui.CostFigure(t, _currency));
+                OrgText.Set(_today[i].Turns, Ui.CostTurns(t));
+                _today[i].Turns.IsVisible = t is not null;
+                _today[i].AtLeast.IsVisible = Ui.CostAtLeast(t);
+            }
+        _list.Update(words.Units);
     }
 
-    static (Control Card, Action<CostUnitWords> Fill) MakeUnit(CostUnitWords first)
+    (Control Card, Action<CostUnitWords> Fill) MakeUnit(CostUnitWords first)
     {
         var title = Ui.With(Ui.Body(""), t => t.FontWeight = FontWeight.SemiBold);
-        TextBlock[] lines = [Line(), Line(), Line(), Line()];   // up to three billing classes and the reservation basis
-        var card = Ui.Card(Ui.Col(Theme.S2, [title, .. lines]));
+        // ONE LINE PER CLASS the unit has turns in today: its short name, its share drawn, its figure and turns beside it.
+        var bars = Classes.Select(c =>
+        {
+            var tag = Ui.With(Ui.Micro(Ui.CostClassShort(c)), t => t.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center);
+            var meter = new Meter { Height = Theme.CostBar, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center, Margin = new Avalonia.Thickness(0, 0, Theme.S4, 0) };
+            var figure = Ui.SmallFigure(c == BillingClasses.Key ? Theme.Text : Theme.TextMuted);
+            var turns = Ui.With(Ui.SmallFigure(Theme.TextFaint), t => t.Margin = new Avalonia.Thickness(Theme.S2, 0, 0, 0));
+            var said = Ui.Row(0, figure, turns);
+            said.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center;
+            meter[Grid.ColumnProperty] = 1;
+            said[Grid.ColumnProperty] = 2;
+            var row = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions($"{Theme.CostTagWidth.ToString(CultureInfo.InvariantCulture)},*,Auto"),
+                Children = { tag, meter, said }
+            };
+            return (Class: c, Row: row, Meter: meter, Figure: figure, Turns: turns);
+        }).ToArray();
+        TextBlock[] lines = [Ui.Quiet(), Ui.Quiet(), Ui.Quiet(), Ui.Quiet()];   // up to three billing classes and the reservation basis
+        var linesPanel = Ui.Col(Theme.S1, lines);
+        linesPanel.Margin = new Avalonia.Thickness(0, Theme.S1, 0, 0);
+        var column = Ui.Col(Theme.S2, [title, .. bars.Select(b => (Control)b.Row), linesPanel]);
+        column.Margin = new Avalonia.Thickness(0, Theme.S3, 0, Theme.S4);
+        var card = new OrgTreeRow(column) { ElbowAt = Theme.S3 + 11 };
+
         return (card, u =>
         {
             OrgText.Set(title, u.Title);
+            title.FontSize = u.Depth == 0 ? Theme.H2 : Theme.Base;
+            foreach (var b in bars)
+            {
+                var t = u.Day.TryGetValue(b.Class, out var got) ? got : null;
+                if (b.Row.IsVisible != t is not null) b.Row.IsVisible = t is not null;
+                if (t is null) continue;
+                var largest = _largest.TryGetValue(b.Class, out var l) ? l : 0m;
+                double? share = t.Turns > 0 && t.Unpriced >= t.Turns ? null
+                    : largest > 0m ? (double)(t.Spent / largest) : 0d;
+                b.Meter.Set(share, b.Class == BillingClasses.Key ? Theme.Text : b.Class == BillingClasses.Plan ? Theme.TextMuted : Theme.TextFaint);
+                OrgText.Set(b.Figure, (Ui.CostAtLeast(t) ? Ui.AtLeast + " " : "") + Ui.CostFigure(t, _currency));
+                OrgText.Set(b.Turns, Ui.CostTurns(t));
+            }
             for (var i = 0; i < lines.Length; i++)
             {
                 var text = i < u.Shown.Count ? u.Shown[i] : "";
                 OrgText.Set(lines[i], text);
+                // The class sentences say what the lines above draw, so they go quieter; the basis is said nowhere else and keeps its voice.
+                var tone = text == u.Basis ? Theme.TextMuted : Theme.TextFaint;
+                if (!ReferenceEquals(lines[i].Foreground, tone)) lines[i].Foreground = tone;
                 if (lines[i].IsVisible != text.Length > 0) lines[i].IsVisible = text.Length > 0;
             }
-            var indent = new Avalonia.Thickness(u.Depth * Theme.S5, 0, 0, 0);
-            if (card.Margin != indent) card.Margin = indent;
+            card.Depth = u.Depth;
         });
-
-        static TextBlock Line() => Ui.With(Ui.Muted(""), t => t.FontSize = Theme.Small);
     }
 }

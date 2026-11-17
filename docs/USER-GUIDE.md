@@ -308,15 +308,54 @@ asked of you, and nothing is opened outside the TradeAgent window.
 
 ## The window
 
-Fifteen pages, down the left-hand side, each with a small drawing beside its name, in this order:
-**The floor** and **Chat**; under *The organisation*, **Organisation**, **Work** and **Costs**; under
-*Trading*, **Dashboard**, **Board** and **Daily report**; under *You and the AI*, **Inbox**, **Owner**
-and **For you**; under *This computer*, **Settings**, **Activity** and **Checks**; and, alone under
-*Yours alone*, **Oversight**. The page you are on has its drawing lit. If the window is too short to
-show them all, the list scrolls. The floor, Organisation, Work and Costs only read the organisation's
-own records: nothing on them can be changed from them, except the presses each one names below.
+The window is one picture: **the floor** — your organisation drawn as a place — fills it, always, and
+everything else lies over it as glass. There is no list of pages down the side. What you see:
 
-**The floor** — the page TradeAgent opens on: your organisation drawn as a place. Every unit is a low
+- **Top left**, the state of the organisation in one large word (*Stopped*, *Working*, *Waiting* …) with
+  its reason under it, who is working now, and **Start the AI** while none is running.
+- **Top right**, on a strip of glass: the mode, your platform and account, whether the AI may trade, and
+  **STOP AI TRADING** with a small red light beside it. It is there whatever you are looking at.
+- **Along the foot**, the **dock**: the six places of the app. Press a place to go there; the place you
+  are in shows its pages beside its name. **Find** (also Ctrl+K, or ⌘K on a Mac) is at its right end.
+- **On the right**, when you go to a page, a **sheet** of glass with that page on it, while the view of
+  the floor moves to the thing the page is about. The cross at its corner, Escape, or **The floor ›
+  Overview** puts it away again.
+
+The six places, and the fifteen pages in them:
+
+| Place | What it is | Its pages |
+|---|---|---|
+| **The floor** | The organisation itself | **Overview** (the floor alone, no sheet), **Organisation**, **Work**, **Costs** |
+| **Talk** | Your conversation with the AI | **Chat** |
+| **The desk** | Where the organisation meets the market | **Dashboard**, **Daily report** |
+| **The board** | The security board's decisions in force | **Board** |
+| **Yours** | What only you decide, what reached you, what you hand the AI, your private line | **Owner**, **For you**, **Inbox**, **Oversight** |
+| **The machine** | What the floor stands on | **Checks**, **Activity**, **Settings** |
+
+Every page keeps the name it has always had, so a sentence anywhere in TradeAgent that says "on the
+Settings page" or "the Board page" still names a page you can go to. If you do not know where something
+is, press **Find** and type its name — a page, or the words on any button: TradeAgent takes you to the
+page, opens the section the button is in and marks the button for a moment. Find presses nothing; the
+press is yours.
+
+**The floor changes with the page beside it.** Beside **Work**, every open task is drawn as a thread
+from the position that gave it to the position that holds it, with a bead as far along the thread as the
+task's time is — amber once it is past its deadline — and a delivery waiting to be judged waits, ringed,
+at its giver's end. Beside **Costs**, every unit that ran a turn today stands in a column of glass as
+tall as what it spent, the figure written on the column's lid with what kind of figure it is: an API
+key's spend is real money, and where no unit spent any, the columns are your plan's capacity at list
+price and say so — the two are never added and never drawn on one scale. A unit whose turns reported no
+cost is an outline in dashes marked *unknown*, never an empty column. In **The machine**, the view drops
+to the floor's side and shows what it stands on: a pillar for each part of this computer, its name down
+it and a light at its head — green ready, amber wants a look, red not working, grey not checked yet.
+The light on **The machine** in the dock is the worst of those. Elsewhere the view simply goes to the
+thing the page is about: the tape for **The desk**, the security board for **The board**, your own ring
+for **Yours**.
+
+Organisation, Work and Costs only read the organisation's own records: nothing on them can be changed
+from them, except the presses each one names below.
+
+**The floor** — what TradeAgent opens on: your organisation drawn as a place. Every unit is a low
 slab with its name written on it, standing on the unit that holds it; every position is a glass cell on
 its unit's slab, the head at the back and its members in front. The security board stands behind the
 organisation, beside the ring marked **You**. What a cell looks like is what its position is doing:
@@ -336,8 +375,8 @@ runs to your ring. A ring opening round a cell is a decision or a turn ending, i
 cut off and red when it ended with an error. Down the right is **What just happened**: the same things in
 sentences, newest first, each with the time it was recorded. Anything an AI wrote is inside quotation
 marks; everything else is TradeAgent's own record. If you come back to this page after being away, what
-happened meanwhile is in the sentences; it is not played across the floor as though it were happening now. Along the bottom are today's AI turns and spend, the
-tasks open and the deliveries waiting to be judged, the same figures the other pages show.
+happened meanwhile is in the sentences; it is not played across the floor as though it were happening now. Above the dock are today's AI turns and spend, the
+tasks open and the deliveries waiting to be judged, the same figures the other pages show. The sentences step aside while a sheet is open.
 
 In front of the organisation lies **the tape**: the last two hours of the minutes TradeAgent has recorded
 for the pair it recorded most lately, each minute's closing price drawn as high as it was against the
@@ -347,30 +386,34 @@ If the newest minute is more than a few minutes old the words beside it say how 
 recorded there is no tape.
 
 Point at a cell to see its full name and what it is; press it and the sentences become that position's
-own — what it did and what reached it — until you press **Show everything**. Nothing on this page
+own — what it did and what reached it — and the view goes to that cell, until you press it again or
+press **Show everything**. Nothing on the floor
 changes anything, with one exception: while the AI is not running it has the same **Start the AI**
 button the Chat page has. That button can only start: pressed when an AI is already running, it does
-nothing. Under the title, while turns are being opened, **Queued next** names the position whose wake is
+nothing. Under the large word, while turns are being opened, **Queued next** names the position whose wake is
 soonest in the queue and when it is due; it is what the queue holds, not a promise, and it is not shown
 while the AI is stopped, paused or held back.
 
-**Replay** is under the title. The organisation works a turn at a time, sometimes hours apart, so what it
+**Replay** is above the day's figures, at the floor's foot. The organisation works a turn at a time, sometimes hours apart, so what it
 did overnight is not something you can sit and watch as it happens. Press **The last hour**, **The last
 24 hours** or **Everything recorded** and the floor plays that stretch back in about a minute, skipping
 the stretches in which nothing was open. While it plays, the page says it is a replay and of what moment,
-and the figures about today are put away; the strip along the top of the window goes on saying what is
+and the figures about today are put away; the strip of glass at the top right goes on saying what is
 true now. A replay starts nothing and changes nothing: it is a reading of your own records. It draws the
 positions that exist today, each appearing at the moment it was created; a position that has since ended
 is not drawn, though what it did is still in the sentences. Over a stretch of up to a day the tape plays
 back with it; over a longer one it is left off. **Back to now** ends it, and so does going to
-another page.
+any page.
 
 For a little while after anything happens on the floor, or after you move the pointer over it, the view
 turns very slowly. Left alone it comes to rest, and from then on TradeAgent draws it again only when
 something on it changes — a turn opening, a task crossing, another minute on the tape — so a floor nobody
-is watching costs your computer nothing. If your computer is slow to draw it — one without a graphics
+is watching costs your computer nothing. It never draws more than sixty pictures a second, and half that
+while a sheet is open in front of it. The glass is TradeAgent's own drawing, the same on Windows, a Mac
+and Linux: behind each pane the floor is seen out of focus, still moving. If your computer is slow to draw it — one without a graphics
 card, or a remote screen — it gives up the slow turning by itself and falls back to a slower, plainer
-picture. If it cannot be drawn at all the page says so and stays dark; every other page works as before.
+picture, and the glass becomes plain dark panes with their bright edge. If the floor cannot be drawn at
+all the window says so and the floor stays dark; every page works as before.
 What the floor says does not change with any of this.
 
 **Chat** — the conversation with the AI. Type in the box at the bottom and press send. Its answers
@@ -954,7 +997,7 @@ that decide what the AI is allowed to do, and nothing you type anywhere else can
 
 ### STOP AI TRADING does not stop the AI working
 
-The red button takes away the AI's permission to **trade**. It does not pause the work, and that is
+**STOP AI TRADING** takes away the AI's permission to **trade**. It does not pause the work, and that is
 deliberate: reading the market, testing strategies, and writing up what went wrong are most of the
 job, and they are worth doing precisely when nothing may be traded. If you want it to stop
 altogether, press **Pause the AI** as well.
@@ -1230,7 +1273,7 @@ that gets people hurt.
 
 **A home an earlier version armed for real money is refused, in the app.** If your settings were saved by
 an earlier version with a real-money mode or real money switched on, this version sends nothing to your
-broker and says so — naming both versions — in a strip at the top of the window, on every page, with one
+broker and says so — naming both versions — in a notice at the top of the window, whatever page you are on, with one
 button: **Set aside the earlier real-money setting**. One press, because it only takes away. Your old
 settings are kept exactly as they were under their own name, nothing is converted or deleted, and the
 founding policy (Practice, no real money) governs from then on.
@@ -1279,7 +1322,8 @@ They are separate on purpose.
 | **Cancel all working orders** | two | Cancels the orders it found, one by one | Does not close positions you already hold |
 | **Close all positions** | two | Sells/buys to flatten everything, at market | — |
 
-**STOP AI TRADING** is one press, and it is at the top of the window on every page. It is the one
+**STOP AI TRADING** is one press, and it is at the top right of the window whatever you are looking at
+— small, with a red light beside it, not a large red button: it does not need to shout to work. It is the one
 control you never have to go looking for. It is instant, it is safe, and it changes nothing about
 your money — it only takes the AI's permission away. It is one press because a mis-press in that
 direction costs nothing and hesitating costs money.

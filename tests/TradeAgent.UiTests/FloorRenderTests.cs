@@ -34,21 +34,11 @@ public class FloorRenderTests(ITestOutputHelper output)
     /// <summary>A folder to keep a replay's frames in, one PNG a frame, for a developer to make a film of; unset, that row does nothing.</summary>
     static readonly string? Film = Environment.GetEnvironmentVariable("TA_FLOOR_FILM") is { Length: > 0 } film ? film : null;
 
-    static readonly double RailEdge = Theme.RailWidth + 1;
-
+    /// <summary>The floor in the window's frame (<c>U-ui-world</c>): it IS the window — edge to edge, nothing beside it and nothing above.</summary>
     static Window Framed(Control page, int width, int height)
     {
-        var grid = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions($"{RailEdge.ToString(System.Globalization.CultureInfo.InvariantCulture)},*"),
-            RowDefinitions = new RowDefinitions($"{Theme.HeaderHeight.ToString(System.Globalization.CultureInfo.InvariantCulture)},*")
-        };
-        grid.Children.Add(new Border { Background = Theme.BgRail, [Grid.RowSpanProperty] = 2 });
-        grid.Children.Add(new Border { Background = Theme.BgRail, [Grid.ColumnProperty] = 1 });
         page.IsVisible = true;
-        // The floor runs edge to edge: the window's page frame has no padding round it (MainWindow.Select).
-        grid.Children.Add(new Border { Child = page, [Grid.ColumnProperty] = 1, [Grid.RowProperty] = 1 });
-        return new Window { Width = width, Height = height, Background = Theme.Bg, Content = grid };
+        return new Window { Width = width, Height = height, Background = Theme.Bg, Content = page };
     }
 
     static WriteableBitmap Capture(Window win, string? name = null)
@@ -66,7 +56,7 @@ public class FloorRenderTests(ITestOutputHelper output)
     static double Brightness(WriteableBitmap frame, System.Numerics.Vector2 at)
     {
         using var fb = frame.Lock();
-        int cx = (int)(at.X + RailEdge), cy = (int)(at.Y + Theme.HeaderHeight), n = 0;
+        int cx = (int)at.X, cy = (int)at.Y, n = 0;
         long sum = 0;
         for (var y = Math.Max(0, cy - 2); y <= Math.Min(fb.Size.Height - 1, cy + 2); y++)
             for (var x = Math.Max(0, cx - 2); x <= Math.Min(fb.Size.Width - 1, cx + 2); x++)
@@ -159,7 +149,9 @@ public class FloorRenderTests(ITestOutputHelper output)
 
                 // NOTHING IS OPEN, AND THE PAGE SAYS SO in the launch ledger's own terms; the page's start is the Chat page's.
                 var resting = Texts(page.Root);
-                Assert.Contains(Labels.NavFloor, resting);
+                // THE STATE, LARGE, AND ITS REASON UNDER IT (U-ui-world): the loop's own sentence, cut at its dash and nothing left out.
+                Assert.Contains("Stopped", resting);
+                Assert.Contains("The AI has not been started.", resting);
                 Assert.Contains(Labels.FloorNobodyWorking, resting);
                 Assert.Contains(Labels.FloorStart, page.Root.GetSelfAndVisualDescendants().OfType<Button>().Where(b => b.IsEffectivelyVisible).Select(b => b.Content as string));
 

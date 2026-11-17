@@ -73,22 +73,15 @@ sealed class HeldFoldersCard
         _close = Ui.Secondary(Close, () => { Said = null; Update(); });
         _close.HorizontalAlignment = HorizontalAlignment.Left;
 
-        Root = new Border
-        {
-            Background = Theme.CautionSoft,
-            BorderBrush = Theme.Caution,
-            BorderThickness = new Thickness(1),
-            CornerRadius = Theme.Radius,
-            Padding = new Thickness(Theme.S5),
-            IsVisible = false,
-            Child = Ui.Col(Theme.S4,
+        // A NOTICE ON THE PANE (U-ui-world): it asks something of the owner, so it outranks the page and is the one edged block it shows.
+        Root = Ui.Notice(Theme.Caution, Ui.Col(Theme.S4,
                 Ui.With(Ui.Eyebrow("Your folders the AI would read"), t => t.Foreground = Theme.Caution),
                 _headline,
                 _lines,
                 MoveButton,
                 _note,
-                _close)
-        };
+                _close));
+        Root.IsVisible = false;
 
         Update();
     }

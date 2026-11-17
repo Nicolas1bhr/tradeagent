@@ -71,6 +71,9 @@ static class Icons
 
     public const string Close = "M6 6 L18 18 M18 6 L6 18";
 
+    /// <summary>The search: a lens.</summary>
+    public const string Find = "M4 10.5 A6.5 6.5 0 1 0 17 10.5 A6.5 6.5 0 1 0 4 10.5 Z M15.3 15.3 L20 20";
+
     /// <summary>
     /// One drawing at the rail's size, its line the colour of <paramref name="holder"/>'s own foreground and following it as that changes.
     /// </summary>

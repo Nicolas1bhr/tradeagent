@@ -17,7 +17,7 @@ namespace TradeAgent.App;
 /// or a gap — if a value is not in the theme it does not belong on the screen, which is the only
 /// mechanism that keeps a hand-built UI from drifting into forty slightly different greys.
 /// </summary>
-static class Ui
+static partial class Ui
 {
     /// <summary>
     /// Where a failed button press goes. Set by the window at startup. Without it an exception in an
@@ -38,6 +38,14 @@ static class Ui
         Text = text, FontSize = Theme.Display, FontFamily = Theme.SansDisplay,
         FontWeight = FontWeight.SemiBold, Foreground = Theme.Text, LineHeight = Theme.DisplayLine,
         LetterSpacing = Theme.DisplayTracking, TextWrapping = TextWrapping.Wrap
+    };
+
+    /// <summary>The one large line of the window: light, close-set, and large enough to be read from across a room.</summary>
+    public static TextBlock Hero(string text) => new()
+    {
+        Text = text, FontSize = Theme.Hero, FontFamily = Theme.SansDisplay,
+        FontWeight = FontWeight.Light, Foreground = Theme.Text, LineHeight = Theme.HeroLine,
+        LetterSpacing = Theme.HeroTracking, TextWrapping = TextWrapping.Wrap
     };
 
     /// <summary>A sign-in code, sized to be read off the screen and typed into a phone: mono, display size, its whole glyph height inside its line box.</summary>
@@ -141,19 +149,23 @@ static class Ui
         return p;
     }
 
+    /// <summary>
+    /// ONE THING ON A PAGE — a mandate, a unit, a group of settings — set off from the next (<c>U-ui-world</c>). It was a box; it is
+    /// a hairline above it and room round it. A page is words on one pane of glass, and a box inside a pane is a second, smaller
+    /// window nobody asked for. The class is how a row finds it; it has no fill and no edge but the line.
+    /// </summary>
     public static Border Card(Control inner) => new()
     {
-        Padding = new Thickness(Theme.S5),
-        CornerRadius = Theme.Radius,
-        BorderThickness = new Thickness(1),
-        BorderBrush = Theme.CardEdge,
-        Background = Theme.BgElevated,
+        Classes = { "card" },
+        Padding = new Thickness(0, Theme.S4, 0, Theme.S4),
+        BorderThickness = new Thickness(0, 1, 0, 0),
+        BorderBrush = Theme.Line,
         Child = inner
     };
 
-    /// <summary>A card with a named region above it. The standard unit of the dashboard.</summary>
+    /// <summary>A named region of a page: its name, small, and what it holds under the line.</summary>
     public static Control Section(string eyebrow, Control body) =>
-        Col(Theme.S2, Eyebrow(eyebrow), Card(body));
+        Col(Theme.S3, Eyebrow(eyebrow), Card(body));
 
     /// <summary>A section that opens and closes (<see cref="Fold"/>): whether it is open, its body and its header's word.</summary>
     internal sealed class FoldState
@@ -178,7 +190,7 @@ static class Ui
         var state = new FoldState { Open = open, Body = body, Mark = mark };
         var press = new Button
         {
-            Content = head, Classes = { "secondary" }, Tag = state, Padding = new Thickness(Theme.S5, Theme.S3),
+            Content = head, Classes = { "fold" }, Tag = state,
             HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch
         };
         press.Click += (_, _) => SetFold(press, !state.Open);
@@ -204,6 +216,9 @@ static class Ui
         open = b.Tag is FoldState { Open: true };
         return b.Tag is FoldState;
     }
+
+    /// <summary>Whether <paramref name="b"/> is the header press of the <see cref="Fold"/> whose body is <paramref name="body"/>.</summary>
+    public static bool IsFoldOf(Button b, Control body) => b.Tag is FoldState state && ReferenceEquals(state.Body, body);
 
     public static Control Divider() => new Border
     {
