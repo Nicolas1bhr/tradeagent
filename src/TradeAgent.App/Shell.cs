@@ -343,6 +343,19 @@ sealed class Finder
         return entries;
     }
 
+    /// <summary>What is typed into the box, for a host that types for the owner (the render rows).</summary>
+    internal string Asked
+    {
+        get => _box.Text ?? "";
+        set => _box.Text = value;
+    }
+
+    /// <summary>The results shown now, in order, by the words each wears.</summary>
+    internal IReadOnlyList<string> Found => [.. _results.Children.OfType<Button>().Select(b => b.Tag is Entry e ? e.Words : "")];
+
+    /// <summary>Chooses the result the keys are on, as Enter does.</summary>
+    internal void ChooseFirst() => Choose(_at);
+
     void Fill()
     {
         var asked = (_box.Text ?? "").Trim();
@@ -460,8 +473,14 @@ static class Shell
                 foreach (var header in column.Children.OfType<Button>())
                     if (Ui.IsFoldOf(header, ancestor)) Ui.SetFold(header, true);
             }
-            control.BringIntoView();
             if (!control.Classes.Contains("found")) control.Classes.Add("found");
+            // SCROLLED TO ONCE THE PAGE HAS BEEN LAID OUT WITH ITS SECTION OPEN: asked for now, the page would be scrolled to where
+            // the press stood while its section was still closed — nowhere.
+            Dispatcher.UIThread.Post(() =>
+            {
+                try { control.BringIntoView(); }
+                catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException)) { }
+            }, DispatcherPriority.Loaded);
             DispatcherTimer.RunOnce(() => control.Classes.Remove("found"), TimeSpan.FromSeconds(2.2), DispatcherPriority.Background);
         }
         catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException)) { }

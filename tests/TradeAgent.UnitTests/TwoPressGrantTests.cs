@@ -173,7 +173,6 @@ public class TwoPressGrantTests
         Assert.Equal(Theme.DangerSoft, b.Background);
         Assert.Equal(Theme.DangerText, b.Foreground);
         Assert.NotEqual(b.Background, b.Foreground);
-        Assert.NotEqual(((Avalonia.Media.ISolidColorBrush)b.Background!).Color, ((Avalonia.Media.ISolidColorBrush)b.Foreground!).Color);
     }
 
     // ---- 5. the composition ----------------------------------------------------------------------

@@ -169,6 +169,32 @@ public sealed class MainWindow : Window
         Content = new Grid { Children = { new Border { Background = Tokens.SetupGlow, IsHitTestVisible = false }, _setupSurface, _shellSurface } };
     }
 
+    // ---- for a host that drives the window itself (the render rows) ---------------------------------
+
+    /// <summary>
+    /// Set by a host that drives the window itself: the floor then keeps no timer and reads on no other thread (<see cref="FloorPage.Manual"/>),
+    /// so what the window shows is exactly what that host last asked of it.
+    /// </summary>
+    internal bool Stepped { get; init; }
+
+    /// <summary>The shell over a status, as the first tick after setup builds and fills it: for a host that has no running app behind the window.</summary>
+    internal void Compose(GatewayStatus status)
+    {
+        EnsureShell();
+        UpdateShell(status);
+    }
+
+    /// <summary>Goes to a page, as a press in the dock does.</summary>
+    internal void Go(Page page) => Select(page);
+
+    internal Page Shown => _shown;
+    internal Sheet? PageSheet => _sheet;
+    internal Dock? PlaceDock => _dock;
+    internal Finder? Find => _finder;
+    internal FloorPage? Floor => _floor;
+    internal Button? Stop => _stopButton;
+    internal Control? PageRoot(Page page) => _pages.GetValueOrDefault(page);
+
     // ---- lifecycle -----------------------------------------------------------------------------
 
     public async Task InitialiseAsync()
@@ -394,6 +420,8 @@ public sealed class MainWindow : Window
             if (e.Property == IsVisibleProperty) stage.Wake();
         };
         KeyDown += OnKey;
+        // A closed window's floor reads nothing and draws nothing more.
+        Closed += (_, _) => floor.Shown(false);
         // THE GLASS IS LIT A LITTLE WHERE THE POINTER IS: the window says where the pointer is, and the stage draws the light. Heard
         // as the event goes down to whatever is under the pointer, and never handled: no press is taken from anything.
         AddHandler(PointerMovedEvent, (_, e) =>
@@ -608,7 +636,7 @@ public sealed class MainWindow : Window
     void BuildPages()
     {
         _sheet = new Sheet(() => Select(Page.Floor));
-        _floor = new FloorPage(FloorSources.For(_host), StartOrStopAgentAsync, Select);
+        _floor = new FloorPage(FloorSources.For(_host), StartOrStopAgentAsync, Select) { Manual = Stepped };
         _chat = new ChatView(_host, StartOrStopAgentAsync);
         var org = OrgSurfaceSources.For(_host);
         _organisation = new OrganisationPage(org);

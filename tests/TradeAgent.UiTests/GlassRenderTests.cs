@@ -15,7 +15,7 @@ namespace TradeAgent.Tests.Unit;
 /// behind it out of focus, bent at the rim — so it is the same picture on every platform. These rows paint real frames of the seeded
 /// working organisation with Skia on the processor alone (no graphics card: the slowest way a frame is ever painted) and hold what
 /// the glass promises: it changes only where a pane lies, it leaves the floor it lies on as it was, a machine that cannot afford the
-/// floor twice gets a pane that does not draw it twice, and what a frame costs is said.
+/// floor twice gets a pane that does not draw it twice, and what a frame costs is said (and never asserted).
 /// </summary>
 public class GlassRenderTests(ITestOutputHelper output)
 {
@@ -150,12 +150,13 @@ public class GlassRenderTests(ITestOutputHelper output)
 
     /// <summary>
     /// WHAT A FRAME COSTS, SAID: painted on the processor alone, the floor by itself and under the window's three panes, in full
-    /// motion (the floor drawn again behind each pane) and calm (not). No figure is asserted — a build machine's speed is nobody's
-    /// promise — but the two things that must stay true are: the calm panes cost next to nothing over the floor itself, and the
-    /// figures are written where a reader of the run finds them.
+    /// motion (the floor shown again behind each pane) and calm (not). <b>No figure is asserted</b>: how fast a build machine is, and
+    /// what else it is doing, is nobody's promise — a row that failed when the machine was busy would be a row about the machine.
+    /// The figures are written where a reader of the run finds them; that a calm pane does not draw the floor again is held by the
+    /// row above, by what is in the picture and not by how long it took.
     /// </summary>
     [Fact]
-    public async Task What_a_frame_of_glass_costs_on_the_processor_alone_is_measured_and_the_calm_glass_is_nearly_free()
+    public async Task What_a_frame_of_glass_costs_on_the_processor_alone_is_measured()
     {
         using var db = OwnerPagesSeed.Working(Path.Combine(UiTestHome.Home, $"glass-cost-{Guid.NewGuid():n}.db"));
         var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
@@ -175,7 +176,7 @@ public class GlassRenderTests(ITestOutputHelper output)
             double floorCalm = Ms(With(frame, FloorMotion.Calm)), glassCalm = Ms(With(frame, FloorMotion.Calm, Sheet, Dock, Status));
             output.WriteLine($"{Width}x{Height}, processor only, mean of 24 frames: floor {floorFull:0.0} ms, floor under three panes {glassFull:0.0} ms; "
                              + $"calm floor {floorCalm:0.0} ms, calm floor under three panes {glassCalm:0.0} ms");
-            Assert.True(glassCalm < floorCalm * 1.6 + 2, $"calm glass is not nearly free: {glassCalm:0.0} ms against {floorCalm:0.0} ms for the floor alone");
+            Assert.All(new[] { floorFull, glassFull, floorCalm, glassCalm }, ms => Assert.True(ms > 0 && double.IsFinite(ms)));
         }
         finally { await host.Gateway.DisposeAsync(); }
     }
