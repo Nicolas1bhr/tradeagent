@@ -227,7 +227,7 @@ sealed class FloorScene
         foreach (var gone in _slabs.Where(kv => !kv.Value.Seen).Select(kv => kv.Key).ToList()) _slabs.Remove(gone);
         _fitted = false;
         _arriving = assembling;
-        Busy = true;
+        Attend();
     }
 
     /// <summary>The floor is being shown for the first time: the camera starts a step back and comes in as it builds.</summary>
@@ -236,22 +236,70 @@ sealed class FloorScene
     /// <summary>Which cells have a turn open now, and whether the AI is running at all: decides every cell's resting light.</summary>
     public void Lit(IReadOnlySet<string> working, bool running)
     {
-        foreach (var (id, state) in _cells) state.Working = working.Contains(id);
+        var changed = _asleepWanted != (running ? 0 : 1);
+        foreach (var (id, state) in _cells)
+        {
+            var now = working.Contains(id);
+            changed |= now != state.Working;
+            state.Working = now;
+        }
         _asleepWanted = running ? 0 : 1;
-        Busy = true;
+        // Told the same thing again, it has nothing new to show: the page says who is working every time it looks, changed or not.
+        if (changed) Attend();
     }
 
     /// <summary>A cell is marked for the owner to look at (a mandate past its deadline) until the page says otherwise.</summary>
     public void Flag(IReadOnlySet<string> flagged)
     {
-        foreach (var (id, state) in _cells) state.Flagged = flagged.Contains(id);
-        Busy = true;
+        foreach (var (id, state) in _cells)
+        {
+            var now = flagged.Contains(id);
+            if (now != state.Flagged) Busy = true;
+            state.Flagged = now;
+        }
     }
 
     /// <summary>The pointer leans the camera a little, as far across and down the stage as it is (each from -1 to 1).</summary>
     public void Lean(float across, float down)
     {
         _leanWanted = new Vector2(Math.Clamp(across, -1, 1), Math.Clamp(down, -1, 1));
+        Attend();
+    }
+
+    /// <summary>
+    /// HOW LONG THE FLOOR GOES ON MOVING OF ITSELF after the last thing that happened on it or the last move of the pointer over it.
+    /// While somebody may be looking, the camera drifts; left alone this long, it comes to rest and the floor asks for no frame at all.
+    /// This app runs for days with nobody at the screen, and on a server seen through a remote one: a picture that turned for ever
+    /// would redraw the whole stage twenty-five times a second for an audience that is not there.
+    /// </summary>
+    public const float AttentionLasts = 25;
+
+    float _attention;
+
+    /// <summary>Something happened, or somebody moved: the floor is worth looking at for a while.</summary>
+    void Attend()
+    {
+        _attention = AttentionLasts;
+        Busy = true;
+    }
+
+    /// <summary>How far the camera's own drift is let out: all the way while the floor has attention, eased to nothing as it runs out.</summary>
+    float Drift => Motion != FloorMotion.Full ? 0 : Ease(Math.Clamp(_attention / 6f, 0, 1));
+
+    /// <summary>
+    /// Everything on its way is dropped where it is — what is travelling, the rings, the sparks, what a line was warmed by, a flash half
+    /// faded. For when what the floor was showing stops being what it shows: a replay ending is not followed by its last moments
+    /// crossing the present's floor.
+    /// </summary>
+    public void Clear()
+    {
+        _travels.Clear();
+        _ripples.Clear();
+        _flecks.Clear();
+        _warmth.Clear();
+        foreach (var state in _cells.Values) state.Flash = 0;
+        foreach (var state in _slabs.Values) state.Rim = 0;
+        _ownerLight = 0;
         Busy = true;
     }
 
@@ -263,7 +311,7 @@ sealed class FloorScene
         if (!_cells.TryGetValue(id, out var state)) return;
         state.Flash = Math.Max(state.Flash, strength);
         state.Tone = tone;
-        Busy = true;
+        Attend();
     }
 
     /// <summary>A ring opens on the floor round a cell: a decision, a judgement, a turn that ended badly.</summary>
@@ -271,19 +319,22 @@ sealed class FloorScene
     {
         if (!_plan.ById.TryGetValue(id, out var cell) || _ripples.Count > 40) return;
         _ripples.Add(new Ripple { At = cell.Foot, Lasts = 1.5f, Reach = reach, Tone = tone });
-        Busy = true;
+        Attend();
     }
 
     /// <summary>A spark leaves the top of a cell: one tool call answered.</summary>
     public void Spark(string id, FloorTone tone = FloorTone.Work)
     {
+        // A seat at work calls a tool every few seconds. On a machine that draws without a graphics card that would be a floor never
+        // still while any turn is open, so there the call is shown where it costs nothing: in the words under the cell's name.
+        if (Motion != FloorMotion.Full) return;
         if (!_plan.ById.TryGetValue(id, out var cell) || _flecks.Count > 80) return;
         // Never two in the same place: each leaves a little to one side of the last, by the count of them.
         var turn = _flecks.Count * 2.4f;
         var off = new Vector3(MathF.Cos(turn), MathF.Sin(turn), 0) * cell.Size * 0.22f;
         _flecks.Add(new Fleck { At = cell.Top + off, Lasts = 1.1f, Rise = 0.9f, Tone = tone });
         if (_cells.TryGetValue(id, out var state)) state.Flash = Math.Max(state.Flash, 0.35f);
-        Busy = true;
+        Attend();
     }
 
     /// <summary>
@@ -325,7 +376,7 @@ sealed class FloorScene
             Warms = warms, Arrived = arrived
         });
         if (!air) Warm(path, 1);
-        Busy = true;
+        Attend();
     }
 
     /// <summary>The owner's place as a destination of <see cref="Send"/>.</summary>
@@ -388,17 +439,20 @@ sealed class FloorScene
             else s.Born = Toward(s.Born, 1, dt, 2.6f, ref busy);
             s.Mark = Toward(s.Mark, cell.Id == _marked || s.Working ? 1 : 0, dt, 5f, ref busy);
             s.Flag = Toward(s.Flag, s.Flagged ? 1 : 0, dt, 2.5f, ref busy);
-            if (s.Working) breathing = true;
+            // A lit cell breathes on a machine that can afford the frames; on one that cannot it is simply lit, and costs none.
+            if (s.Working && Motion == FloorMotion.Full) breathing = true;
         }
         foreach (var s in _slabs.Values)
         {
             if (s.Wait > 0) { s.Wait -= dt; busy = true; }
             else s.Born = Toward(s.Born, 1, dt, 2.4f, ref busy);
-            s.Rim = Toward(s.Rim, 0, dt, 0.9f, ref busy);
+            s.Rim = Toward(s.Rim, 0, dt, 1.5f, ref busy);
         }
-        _ownerLight = Toward(_ownerLight, 0, dt, 0.8f, ref busy);
+        _ownerLight = Toward(_ownerLight, 0, dt, 1.4f, ref busy);
         _tapeBorn = Toward(_tapeBorn, _tape is null ? 0 : 1, dt, 1.6f, ref busy);
-        _tapeFresh = Toward(_tapeFresh, 0, dt, 0.7f, ref busy);
+        // A minute landing lights the tape's end for a moment, on a machine that can afford the frames; on one that cannot, the new
+        // minute is simply drawn. It lands every minute for as long as the app runs: it must never cost more than a moment.
+        _tapeFresh = Motion == FloorMotion.Full ? Toward(_tapeFresh, 0, dt, 3f, ref busy) : 0;
 
         foreach (var key in _warmth.Keys.ToList())
         {
@@ -445,8 +499,13 @@ sealed class FloorScene
         _zoom += (_zoomWanted - _zoom) * Math.Min(1, dt * follow);
         _offset += (_offsetWanted - _offset) * Math.Min(1, dt * 4f);
 
+        if (_attention > 0)
+        {
+            _attention = Math.Max(0, _attention - dt);
+            if (Motion == FloorMotion.Full) breathing = true;                     // the camera is still drifting, or coming to rest
+        }
         Busy = busy;
-        Breathing = breathing || Motion == FloorMotion.Full;
+        Breathing = breathing;
     }
 
     /// <summary>
@@ -455,24 +514,29 @@ sealed class FloorScene
     public void Tape(FloorTape? tape)
     {
         if (tape is null != _tape is null) _fitted = false;                       // the floor is fitted with its tape or without it
-        if (tape is not null && _tape is not null && (tape.Heights.Length != _tape.Heights.Length || tape.Caption != _tape.Caption)) _tapeFresh = 1;
-        if (!Equals(tape, _tape) || tape?.Heights.SequenceEqual(_tape?.Heights ?? []) == false) Busy = true;
+        var same = tape is not null && _tape is not null && tape.Caption == _tape.Caption && tape.Stale == _tape.Stale
+                   && tape.Heights.AsSpan().SequenceEqual(_tape.Heights);
+        if (same) return;
+        // Another minute landed: its end lights for a moment. That is the tape's own business and not a reason for the camera to stir.
+        if (tape is not null && _tape is not null) _tapeFresh = 1;
         _tape = tape;
+        Busy = true;
     }
 
     /// <summary>The owner's place lights for a moment: something reached him, or he spoke.</summary>
-    public void OwnerLit() { _ownerLight = 1; Busy = true; }
+    public void OwnerLit() { _ownerLight = 1; Attend(); }
 
     /// <summary>A unit's slab shows its edge for a moment: it was chartered, or the board's act reached it.</summary>
     public void Rim(string unit)
     {
-        if (_slabs.TryGetValue(unit, out var s)) { s.Rim = 1; Busy = true; }
+        if (_slabs.TryGetValue(unit, out var s)) { s.Rim = 1; Attend(); }
     }
 
     static float Toward(float value, float wanted, float dt, float rate, ref bool moving)
     {
         var d = wanted - value;
-        if (MathF.Abs(d) < 0.002f) return wanted;
+        // Near enough is there: the last hundredth of a light's way is nothing an eye sees, and would be seconds more of frames.
+        if (MathF.Abs(d) < 0.008f) return wanted;
         moving = true;
         return value + d * Math.Min(1, dt * rate);
     }
@@ -487,9 +551,9 @@ sealed class FloorScene
     /// </summary>
     FloorCamera Camera((float L, float T, float R, float B) clear)
     {
-        var drift = Motion == FloorMotion.Full ? MathF.Sin(_time * 0.11f) * 0.04f : 0;
+        var drift = MathF.Sin(_time * 0.11f) * 0.04f * Drift;
         var yaw = BaseYaw + drift + _lean.X * 0.06f;
-        var pitch = BasePitch + (Motion == FloorMotion.Full ? MathF.Sin(_time * 0.07f + 1.3f) * 0.012f : 0) + _lean.Y * 0.03f;
+        var pitch = BasePitch + MathF.Sin(_time * 0.07f + 1.3f) * 0.012f * Drift + _lean.Y * 0.03f;
 
         if (!_fitted || clear != _fitKey)
         {

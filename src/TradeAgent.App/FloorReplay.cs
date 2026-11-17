@@ -50,8 +50,6 @@ sealed partial class FloorPage
     Replaying? _replay;
     DispatcherTimer? _replayTimer;
     long _replayLast;
-    List<FloorLine>? _liveLines;
-    string _liveSignature = "";
 
     readonly TextBlock _replayNote = Ui.Micro(Labels.FloorReplayNote);
     Control? _replayChoices;
@@ -108,6 +106,12 @@ sealed partial class FloorPage
                     _replayNote.Text = problem is null ? Labels.FloorReplayNothing : Labels.FloorNotRead + " " + problem;
                     return;
                 }
+                // Asked for and then walked away from: a replay that finished reading after the page was left does not start unseen.
+                if (!_shown)
+                {
+                    _replayNote.IsVisible = false;
+                    return;
+                }
                 Safely(() => BeginReplay(read));
                 if (_replay is null) return;
                 _replayLast = Stopwatch.GetTimestamp();
@@ -151,8 +155,7 @@ sealed partial class FloorPage
         replay.At = first - TimeSpan.FromSeconds(replay.Speed * 0.8) is var lead && lead > replay.From ? lead : replay.From;
 
         _look.Stop();
-        _liveLines = [.. _lines];
-        _liveSignature = _chartSignature;
+        _stage.Scene.Clear();
         _lines.Clear();
         _lastTool.Clear();
         _openSince.Clear();
@@ -254,9 +257,12 @@ sealed partial class FloorPage
         if (_replay is null) return;
         _replay = null;
         _replayTimer?.Stop();
+        // NOTHING OF THE REPLAY IS LEFT ON THE PRESENT'S FLOOR: what was crossing it is dropped, its sentences go, and the next read
+        // fills the page in again from the ledgers as they stand now, playing none of it.
+        _stage.Scene.Clear();
+        _stage.Scene.Tape(null);
         _lines.Clear();
-        if (_liveLines is not null) _lines.AddRange(_liveLines);
-        _liveLines = null;
+        _seen = null;
         _lastTool.Clear();
         _openSince.Clear();
         _stage.Scene.Lit(new HashSet<string>(), running: !_asleep);

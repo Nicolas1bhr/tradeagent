@@ -47,7 +47,10 @@ sealed record FloorChart(IReadOnlyList<FloorChartUnit> Units, IReadOnlyList<Floo
 
         var chartUnits = open.Select(u => new FloorChartUnit(u.Id, u.ParentId, names.Unit(u.Id), u.Status != OrgUnitStatus.Active,
             u.HeadPositionId is { } head && seated.Contains(head) ? head : null)).ToList();
-        var heads = chartUnits.Where(u => u.Head is not null).ToDictionary(u => u.Head!, u => u.Id, StringComparer.Ordinal);
+        // A position is the head of the first unit that names it: a chart in which two units name one head is damaged, and is still drawn.
+        var heads = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var unit in chartUnits)
+            if (unit.Head is { } head) heads.TryAdd(head, unit.Id);
         var known = chartUnits.Select(u => u.Id).ToHashSet(StringComparer.Ordinal);
 
         var seats = standing.Where(p => known.Contains(p.UnitId)).Select(p =>

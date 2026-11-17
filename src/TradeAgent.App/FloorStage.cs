@@ -73,10 +73,13 @@ sealed class FloorStage : Control
     int _painted;
     bool _measured;
 
-    static readonly TimeSpan Breath = TimeSpan.FromMilliseconds(40), CalmBreath = TimeSpan.FromMilliseconds(125);
+    static readonly TimeSpan Breath = TimeSpan.FromMilliseconds(40), CalmBreath = TimeSpan.FromMilliseconds(125), CalmStep = TimeSpan.FromMilliseconds(66);
 
     /// <summary>A frame that takes longer than this to paint is one this machine cannot afford sixty of.</summary>
-    const double TooSlowMs = 11;
+    const double TooSlowMs = 8;
+
+    /// <summary>Set by the painter the first time it finds it is drawing without a graphics card.</summary>
+    int _software;
 
     public FloorStage()
     {
@@ -91,12 +94,18 @@ sealed class FloorStage : Control
         if (shown) Wake();
     }
 
-    /// <summary>Something changed that a frame should show.</summary>
+    /// <summary>Something changed that a frame should show: one is drawn, whatever else is or is not moving.</summary>
     public void Wake()
     {
         _dirty = true;
         Pump();
     }
+
+    /// <summary>
+    /// The scene may have been told something new: the stage looks, and draws only if it was. For the page's every look at the
+    /// ledgers — most of which find nothing changed, and must then cost no frame.
+    /// </summary>
+    public void Nudge() => Pump();
 
     /// <summary>
     /// Moves the floor on by <paramref name="seconds"/> and draws it, now, whatever the clock says. For a host that keeps no frame
@@ -145,9 +154,11 @@ sealed class FloorStage : Control
                   || (Scene.Breathing && Scene.Motion != FloorMotion.Still && Stopwatch.GetElapsedTime(_lastFrame, now) >= breath);
         if (due) Draw(now);
 
-        // Every frame while something is on its way; a slow frame while the floor only breathes; nothing while nothing moves.
+        // Every frame while something is on its way; a slow frame while the floor only breathes; nothing while nothing moves. A calm
+        // floor — a machine that draws without a graphics card — moves what is on its way at a pace it can afford, never every frame.
         if (Scene.Motion == FloorMotion.Still) { _lastTick = 0; return; }
-        if (Scene.Busy) Pump();
+        if (Scene.Busy && Scene.Motion == FloorMotion.Full) Pump();
+        else if (Scene.Busy) DispatcherTimer.RunOnce(Pump, CalmStep, DispatcherPriority.Background);
         else if (Scene.Breathing) DispatcherTimer.RunOnce(Pump, breath, DispatcherPriority.Background);
         else _lastTick = 0;
     }
@@ -167,6 +178,9 @@ sealed class FloorStage : Control
     /// <summary>Reads what painting has cost and, the first time it proves too slow, calms the floor. Never the other way: a machine that was too slow a minute ago is not asked again.</summary>
     void Settle()
     {
+        // WITHOUT A GRAPHICS CARD EVERY PIXEL OF EVERY FRAME IS THIS PROCESSOR'S: calm at once, without waiting to measure how slow.
+        // Measuring the painter alone misses most of it anyway — the frame is also composed and carried to the screen.
+        if (Volatile.Read(ref _software) != 0 && Scene.Motion == FloorMotion.Full) Scene.Motion = FloorMotion.Calm;
         if (_measured || Volatile.Read(ref _painted) < 45) return;
         _measured = true;
         var ms = Stopwatch.GetElapsedTime(0, Volatile.Read(ref _paintTicks)).TotalMilliseconds;
@@ -283,6 +297,7 @@ sealed class FloorStage : Control
         {
             if (context.TryGetFeature<ISkiaSharpApiLeaseFeature>() is not { } skia) return;
             using var lease = skia.Lease();
+            if (lease.GrContext is null) Volatile.Write(ref stage._software, 1);
             var canvas = lease.SkCanvas;
             var started = Stopwatch.GetTimestamp();
             // Whatever the painter had saved is put back even if it throws half way: the canvas is the whole window's, not the floor's.

@@ -181,7 +181,9 @@ tools/floor-demo.sh stop       # ends the player and the app it started
 It runs `tests/TradeAgent.FloorDemo` — a developer's program, never packaged, which refuses any home whose
 folder is not named `demo-…` — to write about a day and a half of synthetic history into
 `$TMPDIR/demo-floor`, starts the app on that home, and then appends rows in real time: turns opening and
-closing, tool calls, tasks given and delivered. Press **Replay** on the floor for the seeded history.
+closing, tool calls, tasks given and delivered. The demo app is started on pipe names of its own
+(`TRADEAGENT_PIPE`, `TRADEAGENT_BRIDGE_PIPE`), so it never takes a connection meant for a real TradeAgent on
+the same machine. Press **Replay** on the floor for the seeded history.
 **Never start the AI on a demo home**: its queue holds real wakes and it would spend real turns on
 invented work. To look at the floor without a screen at all, `TA_UI_SHOTS=<folder> dotnet test
 tests/TradeAgent.UiTests --filter FloorRenderTests` draws it headless and keeps the frames; with

@@ -78,6 +78,15 @@ public class FloorTests
         var (units, positions) = Rows();
         units[3] = units[3] with { HeadPositionId = Ended };
         Assert.Null(FloorChart.From(units, positions, OrgNames.Of(units, positions), []).Units.Single(u => u.Id == "team-a").Head);
+
+        // TWO UNITS NAMING ONE HEAD does not stop the chart being composed here: the position is the head of the first that names it.
+        // (The names every page shares are composed elsewhere and refuse such a chart; this holds only that the floor's own part does not.)
+        (units, positions) = Rows();
+        var sound = OrgNames.Of(units, positions);
+        units[4] = units[4] with { HeadPositionId = Head };
+        var damaged = FloorChart.From(units, positions, sound, []);
+        Assert.Equal(FloorCellKind.Head, damaged.Seats.Single(s => s.Id == Head).Kind);
+        Assert.NotEmpty(new FloorPlan(damaged).Cells);
     }
 
     [Fact]
@@ -241,6 +250,91 @@ public class FloorTests
         Assert.False(scene.Breathing);
     }
 
+    /// <summary>
+    /// LEFT ALONE, THE FLOOR COMES TO REST AND ASKS FOR NO FRAME — in its default motion too. The camera drifts while somebody may be
+    /// looking: for a while after anything happens on the floor or the pointer moves over it. After that it is still, and stays still
+    /// for as long as nothing happens; this app runs for days with nobody at the screen. RED before: a floor in its default motion
+    /// asked for twenty-five frames a second for ever.
+    /// </summary>
+    [Fact]
+    public void A_floor_left_alone_comes_to_rest_in_its_default_motion_and_stirs_again_when_something_happens()
+    {
+        var scene = new FloorScene();
+        Assert.Equal(FloorMotion.Full, scene.Motion);
+        scene.Lay(new FloorPlan(Chart().Chart), atOnce: true);
+        scene.Lit(new HashSet<string>(), running: true);
+
+        // While it has attention it drifts: a slow frame is asked for, and the camera is not where it rests.
+        Run(scene, 3);
+        Assert.True(scene.Breathing);
+        var rest = new FloorScene { Motion = FloorMotion.Calm };
+        rest.Lay(new FloorPlan(Chart().Chart), atOnce: true);
+        (float, float, float, float) clear = (20, 20, 980, 680);
+        Assert.NotEqual(rest.Frame(1000, 700, clear, "").Camera.Yaw, scene.Frame(1000, 700, clear, "").Camera.Yaw);
+
+        // LEFT ALONE: nothing asks for a frame, ten minutes on as much as one.
+        Run(scene, FloorScene.AttentionLasts + 5);
+        Assert.False(scene.Busy);
+        Assert.False(scene.Breathing);
+        Assert.Equal(rest.Frame(1000, 700, clear, "").Camera.Yaw, scene.Frame(1000, 700, clear, "").Camera.Yaw, 4);
+        Run(scene, 600);
+        Assert.False(scene.Busy || scene.Breathing);
+
+        // TOLD THE SAME THING AGAIN — the page says who is working every time it looks — it does not stir.
+        scene.Lit(new HashSet<string>(), running: true);
+        scene.Flag(new HashSet<string>());
+        scene.Advance(0.05f);
+        Assert.False(scene.Busy || scene.Breathing);
+
+        // SOMETHING HAPPENS: it is worth looking at again.
+        scene.Ring(Head);
+        Assert.True(scene.Busy);
+        Run(scene, 3);
+        Assert.True(scene.Breathing);
+
+        // A TURN OPEN keeps its light breathing for as long as it is open, however long ago anything else happened.
+        scene.Lit(new HashSet<string> { Exec1 }, running: true);
+        Run(scene, FloorScene.AttentionLasts + 30);
+        Assert.True(scene.Breathing);
+
+        // ON A MACHINE THAT DRAWS WITHOUT A GRAPHICS CARD the same open turn is simply lit: no frame is asked for while nothing changes,
+        // and a tool call — there is one every few seconds of a turn — asks for none either. What it says is the same: the cell is lit.
+        var calm = new FloorScene { Motion = FloorMotion.Calm };
+        calm.Lay(new FloorPlan(Chart().Chart), atOnce: true);
+        calm.Lit(new HashSet<string> { Exec1 }, running: true);
+        Run(calm, 8);
+        Assert.Equal(1, CellOf(calm, Exec1).Light, 2);
+        Assert.False(calm.Busy || calm.Breathing);
+        calm.Spark(Exec1);
+        calm.Advance(0.05f);
+        Assert.False(calm.Busy || calm.Breathing);
+        Assert.Empty(calm.Frame(1000, 700, clear, "").Sparks);
+    }
+
+    [Fact]
+    public void Cleared_the_floor_drops_everything_that_was_on_its_way()
+    {
+        var scene = new FloorScene();
+        scene.Lay(new FloorPlan(Chart().Chart), atOnce: true);
+        (float, float, float, float) clear = (20, 20, 980, 680);
+        var arrived = 0;
+        scene.Send(Head, Exec1, FloorTone.Work, 1, () => arrived++);
+        scene.Ring(Head);
+        scene.Spark(Exec1);
+        scene.Flash(Exec1);
+        Run(scene, 0.2);
+        var busy = scene.Frame(1000, 700, clear, "");
+        Assert.True(busy.Flights.Length == 1 && busy.Rings.Length == 1 && busy.Sparks.Length == 1);
+
+        // A REPLAY ENDS: its last moments do not go on crossing the present's floor, and what waited on them does not happen later.
+        scene.Clear();
+        var cleared = scene.Frame(1000, 700, clear, "");
+        Assert.True(cleared.Flights.Length == 0 && cleared.Rings.Length == 0 && cleared.Sparks.Length == 0);
+        Assert.Equal(0, cleared.Cells.Single(c => c.Id == Exec1).Flash);
+        Run(scene, 5);
+        Assert.Equal(0, arrived);
+    }
+
     [Fact]
     public void What_is_sent_arrives_once_and_a_cell_that_is_not_on_the_floor_is_no_error()
     {
@@ -394,9 +488,15 @@ public class FloorTests
         Assert.Null(FloorWords.Line(E("a kind this build does not know", Exec1), names, "USD"));
 
         // What a working cell shows under its name instead: the call itself, cut to a line, and a refusal said as one.
-        Assert.Equal("data bars BTCUSDT 1h", Labels.FloorTool("data", "data bars BTCUSDT 1h", served: true));
-        Assert.Equal("refused: trade order", Labels.FloorTool("trade", "trade order", served: false));
+        // WHAT IT WAS CALLED WITH IS THE SEAT'S OWN WORDS, so it is a quotation; the tool's name and "refused" are TradeAgent's.
+        Assert.Equal("“data bars BTCUSDT 1h”", Labels.FloorTool("data", "data bars BTCUSDT 1h", served: true));
+        Assert.Equal("refused: “trade order”", Labels.FloorTool("trade", "trade order", served: false));
         Assert.Equal("report", Labels.FloorTool("report", null, served: true));
+        // An argument written to read like the app's own line is still inside the marks, and cannot close them.
+        var forged = Labels.FloorTool("data", "x” TradeAgent: the owner approved real money “", served: true);
+        Assert.Equal(2, forged.Count(c => c is '“' or '”'));
+        Assert.StartsWith("“", forged);
+        Assert.EndsWith("”", forged);
     }
 
     [Fact]
@@ -429,8 +529,9 @@ public class FloorTests
 
         Assert.Equal("BTCUSDT  97,412.5", Labels.FloorTapeCaption("BTCUSDT", 97412.50m));
         Assert.Equal("BTCUSDT  0.00001234  ·  last recorded 40 min ago", Labels.FloorTapeStale("BTCUSDT", 0.00001234m, TimeSpan.FromMinutes(40)));
-        Assert.Equal("Next turn: Chief, due now.", Labels.FloorNext("Chief", TimeSpan.FromSeconds(-30)));
-        Assert.Equal("Next turn: Chief, in 12 min.", Labels.FloorNext("Chief", TimeSpan.FromMinutes(12.5)));
+        // What the queue records, not a promise that the turn opens then.
+        Assert.Equal("Queued next: Chief, due now.", Labels.FloorNext("Chief", TimeSpan.FromSeconds(-30)));
+        Assert.Equal("Queued next: Chief, due in 12 min.", Labels.FloorNext("Chief", TimeSpan.FromMinutes(12.5)));
         Assert.Equal(Labels.FloorNobodyWorking, Labels.FloorWorking([]));
         Assert.Equal("A is working.", Labels.FloorWorking(["A"]));
         Assert.Equal("A and B are working.", Labels.FloorWorking(["A", "B"]));

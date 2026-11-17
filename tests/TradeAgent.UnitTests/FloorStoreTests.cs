@@ -216,6 +216,39 @@ public class FloorStoreTests : IDisposable
         Assert.Equal(Head, events[1].Target);
     }
 
+    /// <summary>
+    /// A LOOK THAT WANTS THE LAST FEW SECONDS READS ONLY WHAT WAS WRITTEN SINCE A MARK, and loses nothing by it. The ledgers the floor reads
+    /// by time have no index on it and grow for the life of the home; marks taken before the window's start leave every row written by
+    /// then unread. Marks taken after it could hide a row that belongs in the window, and are refused.
+    /// </summary>
+    [Fact]
+    public void Marks_taken_before_a_window_leave_out_only_what_was_written_before_them()
+    {
+        Chart();
+        void Hire(DateTimeOffset at, string detail) =>
+            Exec("INSERT INTO org_event(at, unit_id, position_id, kind, decider, detail) VALUES($at,$u,$p,'hired',$d,$x)",
+                ("$at", T(at)), ("$u", Team), ("$p", Executor), ("$d", Head), ("$x", detail));
+        List<string?> Hires(IReadOnlyList<FloorEvent> events) => [.. events.Where(e => e.Kind == FloorEventKind.Chart).Select(e => e.Text)];
+
+        Hire(From.AddMinutes(1), "first");
+        Hire(From.AddMinutes(2), "second");
+        var marks = _floor.Marks(From.AddMinutes(3));
+        Assert.True(marks.Rows["org_event"] > 0);
+        Assert.Equal(0, marks.Rows["org_decision"]);                                  // an empty ledger's mark hides nothing
+        Hire(From.AddMinutes(10), "third");
+        Hire(From.AddMinutes(11), "fourth");
+
+        // THE WINDOW AFTER THE MARKS: the same rows with them as without.
+        Assert.Equal(["third", "fourth"], Hires(_floor.Events(From.AddMinutes(5), To)));
+        Assert.Equal(["third", "fourth"], Hires(_floor.Events(From.AddMinutes(5), To, after: marks)));
+
+        // MARKS TAKEN AFTER THE WINDOW'S START COULD HIDE A ROW THAT BELONGS IN IT, and are refused rather than trusted.
+        Assert.Throws<ArgumentException>(() => _floor.Events(From, To, after: marks));
+        // That they do leave rows unread — the reason for the refusal: the same marks under an earlier date hide the first two.
+        Assert.Equal(["third", "fourth"], Hires(_floor.Events(From, To, after: marks with { TakenAt = From.AddSeconds(-1) })));
+        Assert.Equal(["first", "second", "third", "fourth"], Hires(_floor.Events(From, To)));
+    }
+
     [Fact]
     public void A_tool_call_carries_its_tool_argument_whether_it_was_served_its_refusal_and_its_duration()
     {

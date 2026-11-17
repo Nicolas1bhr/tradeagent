@@ -289,7 +289,7 @@ static class Theme
                 S(TemplatedControl.BackgroundProperty, Brushes.Transparent),
                 S(TemplatedControl.BorderThicknessProperty, new Thickness(0)),
                 S(TemplatedControl.ForegroundProperty, TextMuted),
-                S(TemplatedControl.PaddingProperty, new Thickness(S3, 6)),
+                S(TemplatedControl.PaddingProperty, new Thickness(S3, 5)),
                 S(TemplatedControl.CornerRadiusProperty, RadiusSm),
                 S(TemplatedControl.FontWeightProperty, FontWeight.Medium),
                 S(Button.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch)

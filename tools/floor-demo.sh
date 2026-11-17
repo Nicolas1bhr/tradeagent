@@ -16,6 +16,11 @@ export DOTNET_ROOT="${DOTNET_ROOT:-$HOME/.dotnet}"
 export PATH="$DOTNET_ROOT:$PATH"
 DEMO="${TA_FLOOR_DEMO_HOME:-${TMPDIR:-/tmp}/demo-floor}"
 PIDS="$DEMO/.floor-demo.pids"
+# ITS OWN PIPES, NEVER THE REAL APP'S. A second app on the default pipe names is handed every new connection meant for the first, with
+# no error on either side: the real app's agents, and the ATAS bridge, would be talking to a demo. So the demo app is given names of
+# its own before it starts, whatever else is running on this machine.
+export TRADEAGENT_PIPE="ta-floor-demo-$$"
+export TRADEAGENT_BRIDGE_PIPE="ta-floor-demo-bridge-$$"
 
 stop() {
     [ -f "$PIDS" ] || return 0

@@ -94,6 +94,17 @@ public sealed record FloorEvent(DateTimeOffset At, string Kind, string Actor)
 }
 
 /// <summary>
+/// HOW FAR EACH LEDGER HAD GOT at one moment (<see cref="FloorStore.Marks"/>): the last row of each of the tables the floor reads that
+/// has no index on its time. Handed back to <see cref="FloorStore.Events"/>, it lets a look that only wants the last few seconds read
+/// only the rows written since — these tables grow for the life of the home, and a look every second and a half that read each of them
+/// from its first row would cost more every day the home runs.
+/// </summary>
+public sealed record FloorMarks(DateTimeOffset TakenAt, IReadOnlyDictionary<string, long> Rows)
+{
+    internal long Of(string table) => Rows.TryGetValue(table, out var row) ? row : 0;
+}
+
+/// <summary>
 /// WHAT THE FLOOR READS (<c>U-ui-alive</c>): the turns open in a window and what happened in it, in order, from the ledgers as they stand.
 /// Reads only — it writes nothing and no agent reaches it; it is the owner's own picture, in his process.
 /// </summary>
@@ -123,13 +134,39 @@ public sealed class FloorStore(Database db)
         return turns;
     });
 
+    /// <summary>The tables <see cref="Marks"/> marks: those read by time that have no index on it. Each keeps the order its rows were written in.</summary>
+    static readonly string[] Marked =
+    [
+        "org_mandate_event", "org_decision", "org_escalation", "org_lateral", "org_event", "board_act_event", "strategy_run",
+        "strategy_verdict", "strategy_promotion", "strategy_deployment", "fill"
+    ];
+
+    /// <summary>How far each of those ledgers has got, now: the last row of each, by the order its rows were written in.</summary>
+    public FloorMarks Marks(DateTimeOffset now) => db.Read(_ =>
+    {
+        var rows = new Dictionary<string, long>(StringComparer.Ordinal);
+        foreach (var table in Marked)
+        {
+            using var c = db.Cmd($"SELECT COALESCE(MAX(rowid), 0) FROM {table}");
+            rows[table] = Convert.ToInt64(c.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+        }
+        return new FloorMarks(now, rows);
+    });
+
     /// <summary>
     /// What happened after <paramref name="from"/> and up to <paramref name="to"/>, oldest first, at most <paramref name="limit"/> — the
     /// newest when there are more. <paramref name="tools"/> false leaves the tool calls out: there are a hundred of them to every other
     /// thing that happens, and a reader that wants the day's story in a few hundred rows would otherwise be handed its last half hour.
+    ///
+    /// <para><paramref name="after"/>: marks taken BEFORE <paramref name="from"/> — every row written by then is left unread, so only
+    /// what has been written since is looked at. The caller answers for the marks being old enough: a row is written within moments of
+    /// the time it carries, so marks taken well before the window's start cannot hide a row that belongs in it; marks taken after it
+    /// are refused, because they could.</para>
     /// </summary>
-    public IReadOnlyList<FloorEvent> Events(DateTimeOffset from, DateTimeOffset to, int limit = 4000, bool tools = true)
+    public IReadOnlyList<FloorEvent> Events(DateTimeOffset from, DateTimeOffset to, int limit = 4000, bool tools = true, FloorMarks? after = null)
     {
+        if (after is not null && after.TakenAt > from)
+            throw new ArgumentException("marks taken after the window's start could hide rows that belong in it", nameof(after));
         if (limit <= 0 || to <= from) return [];
         return db.Read(_ =>
         {
@@ -144,7 +181,13 @@ public sealed class FloorStore(Database db)
             void Add(string sql, Func<Microsoft.Data.Sqlite.SqliteDataReader, FloorEvent?> map)
             {
                 var rows = new List<FloorEvent>();
-                using (var c = db.Cmd(sql, ("$f", f), ("$t", t), ("$back", back), ("$n", limit), ("$chair", CouncilRoles.Default)))
+                // Every query is handed every mark; each names only its own table's.
+                (string, object?)[] ps =
+                [
+                    ("$f", f), ("$t", t), ("$back", back), ("$n", limit), ("$chair", CouncilRoles.Default),
+                    .. Marked.Where(table => sql.Contains("$m_" + table, StringComparison.Ordinal)).Select(table => ("$m_" + table, (object?)(after?.Of(table) ?? 0L)))
+                ];
+                using (var c = db.Cmd(sql, [.. ps.Where(p => sql.Contains(p.Item1, StringComparison.Ordinal))]))
                 using (var r = c.ExecuteReader())
                     while (r.Read())
                         if (map(r) is { } e) rows.Add(e);
@@ -206,7 +249,7 @@ public sealed class FloorStore(Database db)
                                                  ORDER BY d.at DESC, d.rowid DESC LIMIT 1)
                          ELSE e.reason END
                   FROM org_mandate_event e JOIN org_mandate m ON m.id = e.mandate_id
-                 WHERE e.at > $f AND e.at <= $t
+                 WHERE e.id > $m_org_mandate_event AND e.at > $f AND e.at <= $t
                  ORDER BY e.at DESC, e.id DESC LIMIT $n
                 """,
                 r =>
@@ -225,7 +268,7 @@ public sealed class FloorStore(Database db)
             // 5. A recorded decision.
             Add("""
                 SELECT at, position, attempt_id, kind, choice, id FROM org_decision
-                 WHERE at > $f AND at <= $t
+                 WHERE rowid > $m_org_decision AND at > $f AND at <= $t
                  ORDER BY at DESC, rowid DESC LIMIT $n
                 """,
                 r => new FloorEvent(Sql.Time(r.GetString(0)), FloorEventKind.Decision, r.GetString(1))
@@ -236,7 +279,7 @@ public sealed class FloorStore(Database db)
             // 6. An escalation: to a position, or — where none is named — to the owner.
             Add("""
                 SELECT at, sender, to_position, unit_id, mandate_id, attempt_id, reason, id FROM org_escalation
-                 WHERE at > $f AND at <= $t
+                 WHERE rowid > $m_org_escalation AND at > $f AND at <= $t
                  ORDER BY at DESC, rowid DESC LIMIT $n
                 """,
                 r => new FloorEvent(Sql.Time(r.GetString(0)), FloorEventKind.Escalation, r.GetString(1))
@@ -248,7 +291,7 @@ public sealed class FloorStore(Database db)
             // 7. Words to a peer.
             Add("""
                 SELECT at, sender, to_position, attempt_id, text, id FROM org_lateral
-                 WHERE at > $f AND at <= $t
+                 WHERE rowid > $m_org_lateral AND at > $f AND at <= $t
                  ORDER BY at DESC, rowid DESC LIMIT $n
                 """,
                 r => new FloorEvent(Sql.Time(r.GetString(0)), FloorEventKind.Lateral, r.GetString(1))
@@ -259,7 +302,7 @@ public sealed class FloorStore(Database db)
             // 8. A change to the chart.
             Add("""
                 SELECT at, decider, position_id, unit_id, kind, detail FROM org_event
-                 WHERE at > $f AND at <= $t
+                 WHERE id > $m_org_event AND at > $f AND at <= $t
                  ORDER BY at DESC, id DESC LIMIT $n
                 """,
                 r => new FloorEvent(Sql.Time(r.GetString(0)), FloorEventKind.Chart,
@@ -272,7 +315,7 @@ public sealed class FloorStore(Database db)
             Add("""
                 SELECT e.at, e.seat, e.attempt_id, e.kind, a.id, a.kind
                   FROM board_act_event e JOIN board_act a ON a.id = e.act_id
-                 WHERE e.at > $f AND e.at <= $t
+                 WHERE e.id > $m_board_act_event AND e.at > $f AND e.at <= $t
                  ORDER BY e.at DESC, e.id DESC LIMIT $n
                 """,
                 r => new FloorEvent(Sql.Time(r.GetString(0)), FloorEventKind.Board, r.GetString(1))
@@ -283,8 +326,8 @@ public sealed class FloorStore(Database db)
             // 10. A backtest run some role asked for — never the referee's own holdout run.
             Add("""
                 SELECT created_at, role, attempt, outcome, trades, id FROM strategy_run
-                 WHERE created_at > $f AND created_at <= $t AND role IS NOT NULL AND role <> ''
-                   AND id NOT IN (SELECT holdout_run_id FROM strategy_promotion WHERE holdout_run_id IS NOT NULL)
+                 WHERE rowid > $m_strategy_run AND created_at > $f AND created_at <= $t AND role IS NOT NULL AND role <> ''
+                   AND NOT EXISTS (SELECT 1 FROM strategy_promotion p WHERE p.holdout_run_id = strategy_run.id)
                  ORDER BY created_at DESC, rowid DESC LIMIT $n
                 """,
                 r => new FloorEvent(Sql.Time(r.GetString(0)), FloorEventKind.Backtest, r.GetString(1))
@@ -296,7 +339,7 @@ public sealed class FloorStore(Database db)
             Add("""
                 SELECT v.requested_at, a.role, v.attempt_id, v.version_id
                   FROM strategy_verdict v LEFT JOIN ai_attempt a ON a.id = v.attempt_id
-                 WHERE v.requested_at > $f AND v.requested_at <= $t
+                 WHERE v.rowid > $m_strategy_verdict AND v.requested_at > $f AND v.requested_at <= $t
                  ORDER BY v.requested_at DESC, v.rowid DESC LIMIT $n
                 """,
                 r => new FloorEvent(Sql.Time(r.GetString(0)), FloorEventKind.VerdictAsked,
@@ -308,7 +351,7 @@ public sealed class FloorStore(Database db)
             // 12. The referee's verdict.
             Add("""
                 SELECT at, verdict, reason, version_id FROM strategy_promotion
-                 WHERE at > $f AND at <= $t
+                 WHERE rowid > $m_strategy_promotion AND at > $f AND at <= $t
                  ORDER BY at DESC, rowid DESC LIMIT $n
                 """,
                 r => new FloorEvent(Sql.Time(r.GetString(0)), FloorEventKind.Verdict, FloorEvent.Referee)
@@ -319,7 +362,7 @@ public sealed class FloorStore(Database db)
             // 13. A forward paper run started.
             Add("""
                 SELECT started_at, symbol, id FROM strategy_deployment
-                 WHERE started_at > $f AND started_at <= $t AND mode = 'PAPER'
+                 WHERE rowid > $m_strategy_deployment AND started_at > $f AND started_at <= $t AND mode = 'PAPER'
                  ORDER BY started_at DESC, rowid DESC LIMIT $n
                 """,
                 r => new FloorEvent(Sql.Time(r.GetString(0)), FloorEventKind.PaperRun, FloorEvent.App)
@@ -327,11 +370,11 @@ public sealed class FloorStore(Database db)
                     Detail = r.GetString(1), Ref = r.GetString(2)
                 });
 
-            // 14. A fill, at the moment the app recorded it.
+            // 14. A fill, at the moment the app recorded it (the column is never empty: a fill is recorded when it is written).
             Add("""
-                SELECT COALESCE(recorded_at, at) AS t, side, symbol, price, quantity, execution_id FROM fill
-                 WHERE COALESCE(recorded_at, at) > $f AND COALESCE(recorded_at, at) <= $t
-                 ORDER BY t DESC, rowid DESC LIMIT $n
+                SELECT recorded_at, side, symbol, price, quantity, execution_id FROM fill
+                 WHERE rowid > $m_fill AND recorded_at > $f AND recorded_at <= $t
+                 ORDER BY recorded_at DESC, rowid DESC LIMIT $n
                 """,
                 r => new FloorEvent(Sql.Time(r.GetString(0)), FloorEventKind.Fill, FloorEvent.Venue)
                 {

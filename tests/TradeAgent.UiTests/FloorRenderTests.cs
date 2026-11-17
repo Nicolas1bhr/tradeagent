@@ -211,7 +211,8 @@ public class FloorRenderTests(ITestOutputHelper output)
                 Step(page, 0.9);
                 win.UpdateLayout();
                 Capture(win, $"floor-moving-{width}x{height}.png");
-                Assert.Contains("data bars BTCUSDT 1h", Texts(page.Root));
+                // What a seat called a tool with is the seat's own words: under its name, and in quotation marks.
+                Assert.Contains("“data bars BTCUSDT 1h”", Texts(page.Root));
                 win.Close();
             });
         }
@@ -270,8 +271,16 @@ public class FloorRenderTests(ITestOutputHelper output)
                 Assert.Contains(seen, t => t.Contains("delivered to", StringComparison.Ordinal));
                 Assert.Contains(seen, t => t.Contains("decided: “keep testing the skew”", StringComparison.Ordinal));
 
-                // BACK TO NOW: the floor is the present's again, with the sentences and the figures it had.
+                // BACK TO NOW: the floor is the present's again, with the sentences and the figures it had — and nothing the replay
+                // left crossing it. Stopped here with something still on its way, to hold exactly that.
+                page.Happened(new FloorEvent(DateTimeOffset.UtcNow, FloorEventKind.Mandate, OwnerPagesSeed.Head)
+                    { Target = OwnerPagesSeed.Executor1, Ref = OwnerPagesSeed.Executor1, Detail = MandateEventKind.Issued, Text = "a task of the replay's" }, moving: true);
+                page.Stage.Step(0.1f);
+                Assert.NotEmpty(page.Stage.Last!.Flights);
                 page.StopReplay();
+                page.Stage.Step(0.05f);
+                Assert.Empty(page.Stage.Last!.Flights);
+                Assert.Empty(page.Stage.Last!.Rings);
                 page.ReadNow();
                 win.UpdateLayout();
                 var after = Texts(page.Root);
@@ -279,6 +288,88 @@ public class FloorRenderTests(ITestOutputHelper output)
                 Assert.DoesNotContain(Labels.FloorReplayNote, after);
                 Assert.Equal(1, page.Root.GetSelfAndVisualDescendants().OfType<Control>().Single(c => c.Name == "floor-figures").Opacity);
                 Assert.Equal(before.Where(t => t.Contains(" turn", StringComparison.Ordinal)), after.Where(t => t.Contains(" turn", StringComparison.Ordinal)));
+                Assert.DoesNotContain(after, t => t.Contains("a task of the replay's", StringComparison.Ordinal));
+                win.Close();
+            });
+        }
+        finally { await host.Gateway.DisposeAsync(); }
+    }
+
+    /// <summary>
+    /// THE FLOOR SAYS NO MORE THAN IT KNOWS, AND ITS ONE PRESS CANNOT DO MORE THAN START. Four things an owner could otherwise be told
+    /// or do wrongly: that a turn is "queued next" while the loop is held and will open none; that the floor is fine when it could not
+    /// be drawn — the notice has to outlast the next read; that things which happened while the page was away are happening now; and
+    /// "Start the AI" pressed a moment after an AI started, when the shell's own action would stop it.
+    /// </summary>
+    [Fact]
+    public async Task The_floor_says_no_more_than_it_knows_and_its_start_can_only_start()
+    {
+        using var db = OwnerPagesSeed.Working(Path.Combine(UiTestHome.Home, $"honest-{Guid.NewGuid():n}.db"));
+        var host = AppHost.Composed(db, new FakeConnector(new FakeBroker()), new AgentPresence());
+        try
+        {
+            HeadlessUi.Run(() =>
+            {
+                var clock = DateTimeOffset.UtcNow;
+                bool opening = true, running = false;
+                var presses = 0;
+                var page = new FloorPage(FloorSources.For(host) with { Now = () => clock, TurnsOpen = () => opening, AiRunning = () => running },
+                    () => { presses++; return Task.CompletedTask; }, _ => { }) { Manual = true };
+                var win = Framed(page.Root, 1280, 800);
+                win.Show();
+                win.UpdateLayout();
+                page.Shown(true);
+                page.ReadNow();
+                win.UpdateLayout();
+
+                // QUEUED NEXT, as the queue has it, while turns are being opened: the seed's one queued wake, already due.
+                var org = new OrgStore(db);
+                Assert.Contains(Texts(page.Root), t => t.StartsWith("Queued next: ", StringComparison.Ordinal) && t.EndsWith(", due now.", StringComparison.Ordinal));
+                // HELD — the vendor's limit, a full disk, a wait after a crash, a pause: the loop opens nothing, and the floor does not say one is next.
+                opening = false;
+                clock = clock.AddSeconds(2);
+                page.ReadNow();
+                win.UpdateLayout();
+                Assert.DoesNotContain(Texts(page.Root), t => t.StartsWith("Queued next", StringComparison.Ordinal));
+
+                // IT COULD NOT BE DRAWN, and says so for the rest of the run: the next reads, which succeed, do not take the line away.
+                page.NotDrawn("the picture failed");
+                for (var i = 0; i < 3; i++)
+                {
+                    clock = clock.AddSeconds(2);
+                    page.ReadNow();
+                }
+                win.UpdateLayout();
+                Assert.Contains(Labels.FloorNotDrawn + " the picture failed", Texts(page.Root));
+
+                // START CAN ONLY START. Shown because no AI was running at the last read; one has started since. The press does nothing.
+                var start = page.Root.GetSelfAndVisualDescendants().OfType<Button>().Single(b => b.IsEffectivelyVisible && b.Content as string == Labels.FloorStart);
+                running = true;
+                start.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+                Dispatcher.UIThread.RunJobs();
+                Assert.Equal(0, presses);
+                running = false;
+                start.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+                Dispatcher.UIThread.RunJobs();
+                Assert.Equal(1, presses);
+
+                // AWAY, THEN BACK: a decision recorded while the page was not looking is in the sentences when it returns, and is not
+                // played across the floor as if it were being taken now.
+                var head = OwnerPagesSeed.Head;
+                org.Decide(head, "turn-test", "routine", ["wait", "go"], "wait for the second source", "nothing new", [], [], clock.AddMinutes(4));
+                clock = clock.AddMinutes(9);
+                page.ReadNow();
+                page.Stage.Step(0.05f);
+                win.UpdateLayout();
+                Assert.Contains(Texts(page.Root), t => t.Contains("decided: “wait for the second source”", StringComparison.Ordinal));
+                Assert.Empty(page.Stage.Last!.Rings);
+                Assert.Empty(page.Stage.Last!.Flights);
+                // And one recorded while it IS looking is shown happening: the ring round the seat that decided.
+                org.Decide(head, "turn-test", "routine", ["wait", "go"], "go", "the second source arrived", [], [], clock.AddSeconds(1));
+                clock = clock.AddSeconds(4);
+                page.ReadNow();
+                page.Stage.Step(0.05f);
+                Assert.NotEmpty(page.Stage.Last!.Rings);
                 win.Close();
             });
         }
@@ -374,12 +465,14 @@ public class FloorRenderTests(ITestOutputHelper output)
                 win.UpdateLayout();
                 page.Shown(true);
 
+                // One tick of the window's own life: the dispatcher's loop run for a few milliseconds — its queued work AND its timers,
+                // which the stage paces a calm floor by — and then the platform's frame clock.
                 void Ticks(int n, Func<bool>? until = null)
                 {
                     for (var i = 0; i < n && until?.Invoke() != true; i++)
                     {
-                        Thread.Sleep(8);
-                        Dispatcher.UIThread.RunJobs();
+                        using (var beat = new CancellationTokenSource(TimeSpan.FromMilliseconds(8)))
+                            Dispatcher.UIThread.MainLoop(beat.Token);
                         AvaloniaHeadlessPlatform.ForceRenderTimerTick();
                         Dispatcher.UIThread.RunJobs();
                     }
@@ -388,8 +481,8 @@ public class FloorRenderTests(ITestOutputHelper output)
                 // THE FIRST READ comes back from its own thread, lays the floor, and the stage draws it.
                 Ticks(400, () => page.Stage.Last is { Cells.Length: > 0 });
                 Assert.True(page.Stage.Last is { Cells.Length: > 0 }, "the floor was never read and drawn");
-                // It settles: lights reach their rest and nothing is left moving.
-                Ticks(400, () => !page.Stage.Scene.Busy && !page.Stage.Scene.Breathing);
+                // It settles: the floor has built itself, lights have reached their rest and nothing is left moving.
+                Ticks(1500, () => !page.Stage.Scene.Busy && !page.Stage.Scene.Breathing);
                 Assert.False(page.Stage.Scene.Busy);
                 Ticks(4);
 
@@ -404,7 +497,7 @@ public class FloorRenderTests(ITestOutputHelper output)
                 page.Stage.Scene.Send(OwnerPagesSeed.Head, OwnerPagesSeed.Executor1, FloorTone.Work, 1, () => arrived = true);
                 page.Stage.Wake();
                 var moving = page.Stage.Frames;
-                Ticks(600, () => arrived && !page.Stage.Scene.Busy);
+                Ticks(1500, () => arrived && !page.Stage.Scene.Busy);
                 Assert.True(arrived, "what was sent never arrived");
                 Assert.True(page.Stage.Frames - moving >= 10, $"only {page.Stage.Frames - moving} frames were drawn of something crossing the floor");
 
