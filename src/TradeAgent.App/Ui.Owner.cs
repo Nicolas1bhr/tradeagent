@@ -74,6 +74,11 @@ static partial class Ui
     {
         value.TextWrapping = TextWrapping.Wrap;
         value.FontSize = Theme.Base;
+        // A READING IS SET IN THE TEXT FACE (Inter only): figures inside it keep tabular digits, so a version or a count does not jitter,
+        // without the mono face shouting a whole sentence.
+        value.FontFamily = Theme.Sans;
+        value.FontFeatures = Theme.Tabular;
+        value.FontWeight = FontWeight.Normal;
         if (value.Foreground is null || ReferenceEquals(value.Foreground, Theme.TextMuted)) value.Foreground = Theme.Text;
         return Col(2, new TextBlock
         {
