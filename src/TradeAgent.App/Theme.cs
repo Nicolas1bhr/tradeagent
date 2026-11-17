@@ -27,7 +27,7 @@ namespace TradeAgent.App;
 ///     meaning, so "the button you probably want" never reads as "you are making money".
 ///   - Depth comes from light, not from shadows under panels: a pane's rim catches it, a hairline is a line of it.
 /// </summary>
-static class Theme
+static partial class Theme
 {
     static IBrush B(string hex) => new SolidColorBrush(Color.Parse(hex));
     static IBrush B(string hex, double opacity) => new SolidColorBrush(Color.Parse(hex), opacity);
@@ -58,14 +58,6 @@ static class Theme
     public static readonly IBrush TextMuted = B("#9BA4B3");
     public static readonly IBrush TextFaint = B("#6F798B");
     public static readonly IBrush TextOnAccent = B("#0B0D12");
-
-    /// <summary>
-    /// Text on the one saturated fill in the app — the emergency control. Named here rather than
-    /// written at the widget because the control is repainted from code while it is half-pressed,
-    /// and the two places that paint it have to agree: arming swaps the button to the "danger"
-    /// class, whose foreground is red, over a fill that is also red.
-    /// </summary>
-    public static readonly IBrush TextOnEmergency = Brushes.White;
 
     // ---- accent: indigo, the one colour with no money meaning ------------------------------
     public static readonly IBrush Accent = B("#7C8CF8");

@@ -7,14 +7,14 @@ namespace TradeAgent.Tests.Unit;
 /// THE FIVE-SECOND TICK UPDATES THE PAGE THE OWNER IS LOOKING AT (<c>U-perf-scan</c>, R28 G3), not all fourteen: every tick read every page's
 /// records on the UI thread — scorecards included — for pages nobody could see. A page is brought up to date when it is shown, and on every
 /// tick while it is. The window itself needs a platform no unit test has, so its two call sites are held by source, as
-/// <c>OrgSurfaceShellTests</c> holds the rail's.
+/// <c>OrgSurfaceShellTests</c> holds the organisation's pages'.
 /// </summary>
 public class PageTickTests
 {
     [Fact]
     public void A_tick_updates_the_shown_page_alone_and_the_settings_sections_with_the_owners_page()
     {
-        foreach (var (page, _) in MainWindow.Rail)
+        foreach (var (page, _) in Places.Pages)
         {
             var updated = MainWindow.PagesToUpdate(page);
             Assert.Equal(page, updated[0]);

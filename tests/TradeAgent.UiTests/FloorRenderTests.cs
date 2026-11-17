@@ -149,7 +149,9 @@ public class FloorRenderTests(ITestOutputHelper output)
 
                 // NOTHING IS OPEN, AND THE PAGE SAYS SO in the launch ledger's own terms; the page's start is the Chat page's.
                 var resting = Texts(page.Root);
-                Assert.Contains(Labels.NavFloor, resting);
+                // THE STATE, LARGE, AND ITS REASON UNDER IT (U-ui-world): the loop's own sentence, cut at its dash and nothing left out.
+                Assert.Contains("Stopped", resting);
+                Assert.Contains("The AI has not been started.", resting);
                 Assert.Contains(Labels.FloorNobodyWorking, resting);
                 Assert.Contains(Labels.FloorStart, page.Root.GetSelfAndVisualDescendants().OfType<Button>().Where(b => b.IsEffectivelyVisible).Select(b => b.Content as string));
 

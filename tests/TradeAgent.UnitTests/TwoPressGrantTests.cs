@@ -167,9 +167,13 @@ public class TwoPressGrantTests
 
         Assert.True(Ui.IsArmed(b));
         Assert.Equal(Labels.ResumeAiTradingArmed, b.Content);
-        Assert.Equal(Theme.Danger, b.Background);
-        Assert.Equal(Theme.TextOnEmergency, b.Foreground);
+        // RED LIGHT IN THE GLASS, NOT A RED SLAB (U-ui-world; the owner, 2026-11-17: "get rid of that big red button"): the armed fill is
+        // the soft red, the words the red made to be read on it — both painted by the page, and never the same brush. What this row holds
+        // is unchanged: the repaint sets the text with the fill, so the armed sentence is never painted in its own fill's colour.
+        Assert.Equal(Theme.DangerSoft, b.Background);
+        Assert.Equal(Theme.DangerText, b.Foreground);
         Assert.NotEqual(b.Background, b.Foreground);
+        Assert.NotEqual(((Avalonia.Media.ISolidColorBrush)b.Background!).Color, ((Avalonia.Media.ISolidColorBrush)b.Foreground!).Color);
     }
 
     // ---- 5. the composition ----------------------------------------------------------------------

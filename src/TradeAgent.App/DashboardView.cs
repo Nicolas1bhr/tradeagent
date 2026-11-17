@@ -326,16 +326,13 @@ sealed class DashboardPage
             Ui.Section("The AI's own work", aiCard),
             _performance.Root);
 
-        var right = Ui.Section("System health", _healthRows);
-        right.Margin = new Thickness(Theme.S5, 0, 0, 0);
-
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,340") };
-        grid.Children.Add(Pages.Column(0, left));
-        grid.Children.Add(Pages.Column(1, right));
+        // ONE COLUMN (U-ui-world): the page is read on a sheet beside the floor, and a second column there was a column too narrow to
+        // read. This computer's parts close the page; the machine's own place has them in full.
+        left.Children.Add(Ui.Section("System health", _healthRows));
 
         Root = Pages.Scroll(Ui.Col(0,
             Pages.Header("Dashboard", "What TradeAgent and the AI are doing right now."),
-            grid));
+            left));
     }
 
     public void Update(GatewayStatus status)

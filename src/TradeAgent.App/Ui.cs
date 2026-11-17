@@ -17,7 +17,7 @@ namespace TradeAgent.App;
 /// or a gap — if a value is not in the theme it does not belong on the screen, which is the only
 /// mechanism that keeps a hand-built UI from drifting into forty slightly different greys.
 /// </summary>
-static class Ui
+static partial class Ui
 {
     /// <summary>
     /// Where a failed button press goes. Set by the window at startup. Without it an exception in an

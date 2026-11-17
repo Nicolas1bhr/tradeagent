@@ -52,37 +52,49 @@ public class DashboardShedTests
 }
 
 /// <summary>
-/// THE RAIL (<c>U-settings-shed</c> item 5; R24 § 4.7): the pages in the order the owner reads them after the shed — the Board beside the
-/// Dashboard it governs, the owner's page where Safety was, Oversight last — every page on the rail exactly once.
+/// THE PLACES (<c>U-ui-world</c>, which took the rail away; before it <c>U-settings-shed</c> item 5 and R24 § 4.7 held the rail's order):
+/// the window is one picture and every page is found at the thing it is about — six places in a dock, each page a leaf of exactly one.
+/// What the rail's rows held is held here: every page the app has can be reached, once, under the name the app's own sentences call it by.
 /// </summary>
-public class RailOrderTests
+public class PlacesTests
 {
     [Fact]
-    public void The_rail_lists_the_pages_in_order()
+    public void Every_page_is_a_leaf_of_exactly_one_place_under_the_name_the_apps_sentences_use()
     {
         Assert.Equal(
-            [TradeAgent.Core.Labels.NavFloor, "Chat", TradeAgent.Core.Labels.NavOrganisation, TradeAgent.Core.Labels.NavWork, TradeAgent.Core.Labels.NavCosts, "Dashboard",
-                TradeAgent.Core.Labels.BoardPage, "Daily report", "Inbox", TradeAgent.Core.Labels.OwnerPage, TradeAgent.Core.Labels.NavForYou, "Settings",
-                "Activity", "Checks", "Oversight"],
-            MainWindow.Rail.Select(r => r.Label));
+            [TradeAgent.Core.Labels.PlaceOverview, TradeAgent.Core.Labels.NavOrganisation, TradeAgent.Core.Labels.NavWork, TradeAgent.Core.Labels.NavCosts,
+                "Chat", "Dashboard", "Daily report", TradeAgent.Core.Labels.BoardPage,
+                TradeAgent.Core.Labels.OwnerPage, TradeAgent.Core.Labels.NavForYou, "Inbox", "Oversight",
+                "Checks", "Activity", "Settings"],
+            Places.Pages.Select(p => p.Word));
 
-        // EVERY PAGE ONCE: a page the enum has and the rail lacks is a page nobody can reach.
-        Assert.Equal(Enum.GetValues<MainWindow.Page>().Order(), MainWindow.Rail.Select(r => r.Page).Order());
-        Assert.Equal(MainWindow.Rail.Count, MainWindow.Rail.Select(r => r.Page).Distinct().Count());
+        // EVERY PAGE ONCE: a page the enum has and no place holds is a page nobody can reach.
+        Assert.Equal(Enum.GetValues<MainWindow.Page>().Order(), Places.Pages.Select(p => p.Page).Order());
+        Assert.Equal(Places.Pages.Count(), Places.Pages.Select(p => p.Page).Distinct().Count());
+        foreach (var (page, word) in Places.Pages)
+        {
+            Assert.Contains(Places.Of(page).Leaves, l => l.Page == page);
+            Assert.Equal(word, Places.Word(page));
+        }
     }
 
     /// <summary>
-    /// THE RAIL'S GROUPS ARE THE RAIL (<c>U-ui-alive</c>): the same pages in the same order, only gathered under a few words — so grouping
-    /// the rail can never drop a page, add one or move one past another. The first group has no name; Oversight is alone in the last.
+    /// THE DOCK'S SIX PLACES: each with a name, a drawing and a sentence of its own; each opens on its first leaf; the floor's own
+    /// overview is the one page with no sheet over the floor — it is the floor; and Oversight, the owner's private line, is a leaf of
+    /// what is his and of nothing else.
     /// </summary>
     [Fact]
-    public void The_rails_groups_hold_the_rails_pages_in_the_rails_order()
+    public void The_dock_holds_six_places_each_with_its_own_name_and_drawing_and_the_floor_alone_has_no_sheet()
     {
-        Assert.Equal(MainWindow.Rail.Select(r => r.Page), MainWindow.RailGroups.SelectMany(g => g.Pages));
-        Assert.Null(MainWindow.RailGroups[0].Title);
-        Assert.All(MainWindow.RailGroups.Skip(1), g => Assert.False(string.IsNullOrWhiteSpace(g.Title)));
-        Assert.Equal([MainWindow.Page.Oversight], MainWindow.RailGroups[^1].Pages);
-        // And every page has a drawing of its own beside its name.
-        Assert.Equal(MainWindow.Rail.Count, MainWindow.Rail.Select(r => MainWindow.RailIcon(r.Page)).Distinct().Count());
+        Assert.Equal([Place.Floor, Place.Talk, Place.Desk, Place.Board, Place.Yours, Place.Machine], Places.All.Select(p => p.Place));
+        Assert.Equal(6, Places.All.Select(p => p.Name).Distinct().Count());
+        Assert.Equal(6, Places.All.Select(p => p.Icon).Distinct().Count());
+        Assert.All(Places.All, p => Assert.False(string.IsNullOrWhiteSpace(p.Says)));
+        Assert.All(Places.All, p => Assert.NotEmpty(p.Leaves));
+
+        Assert.Equal(MainWindow.Page.Floor, Places.All[0].Leaves[0].Page);
+        Assert.Equal([MainWindow.Page.Floor], Enum.GetValues<MainWindow.Page>().Where(p => !Places.HasSheet(p)));
+        Assert.Equal(Place.Yours, Places.Of(MainWindow.Page.Oversight).Place);
+        Assert.Equal(Place.Yours, Places.Of(MainWindow.Page.Owner).Place);
     }
 }
