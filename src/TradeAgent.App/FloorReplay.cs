@@ -248,7 +248,8 @@ sealed partial class FloorPage
         _working.Text = Labels.FloorWorking([.. _openSince.OrderBy(o => o.Value).Select(o => FloorWords.Who(o.Key, _names))]);
         _working.IsVisible = true;
         Feed();
-        _stage.Wake();
+        // The scene was told what this step of the replay holds; a step that changed nothing draws nothing.
+        _stage.Nudge();
     }
 
     /// <summary>Back to now: the floor is the present's again, with the sentences it had.</summary>

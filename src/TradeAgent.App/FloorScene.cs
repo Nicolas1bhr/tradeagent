@@ -262,6 +262,13 @@ sealed class FloorScene
     /// <summary>The pointer leans the camera a little, as far across and down the stage as it is (each from -1 to 1).</summary>
     public void Lean(float across, float down)
     {
+        // Only where the frames are free: on a machine that draws without a graphics card, a camera that followed the pointer would
+        // redraw the whole stage for every inch the pointer moved.
+        if (Motion != FloorMotion.Full)
+        {
+            _leanWanted = Vector2.Zero;
+            return;
+        }
         _leanWanted = new Vector2(Math.Clamp(across, -1, 1), Math.Clamp(down, -1, 1));
         Attend();
     }
