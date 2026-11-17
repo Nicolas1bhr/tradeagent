@@ -168,6 +168,26 @@ tools/win-ps.sh  < script.ps1       # runs PowerShell without four layers of quo
 tools/win-shot.sh /tmp/win.png      # console desktop only — see win-state.sh above
 ```
 
+### floor-demo.sh — the floor with something happening on it
+
+The floor (the landing page) is lit by the launch ledger and the organisation's own tables. On a fresh
+scratch home both are empty, so there is nothing to look at, and a real turn costs real money. So:
+
+```bash
+tools/floor-demo.sh            # seeds a scratch home, opens the app on it, and plays synthetic work into it
+tools/floor-demo.sh stop       # ends the player and the app it started
+```
+
+It runs `tests/TradeAgent.FloorDemo` — a developer's program, never packaged, which refuses any home whose
+folder is not named `demo-…` — to write about a day and a half of synthetic history into
+`$TMPDIR/demo-floor`, starts the app on that home, and then appends rows in real time: turns opening and
+closing, tool calls, tasks given and delivered. Press **Replay** on the floor for the seeded history.
+**Never start the AI on a demo home**: its queue holds real wakes and it would spend real turns on
+invented work. To look at the floor without a screen at all, `TA_UI_SHOTS=<folder> dotnet test
+tests/TradeAgent.UiTests --filter FloorRenderTests` draws it headless and keeps the frames; with
+`TA_FLOOR_DEMO_DB` (a seeded demo database) and `TA_FLOOR_FILM` (a folder) it also keeps a replay frame by
+frame.
+
 ### atas-gate/ — the money-path branches, executed
 
 `AtasStrategyAdapter.cs` is `<Compile Remove>`d unless `AtasBridgeBuild=true`, so nothing in the
