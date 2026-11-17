@@ -142,7 +142,8 @@ static class FloorPaint
         if (full && slab.Level == 0)
         {
             // What it stands on darkens round it: the one soft shadow on the floor, and only under the two things that stand on the floor itself.
-            using var shade = new SKPaint { IsAntialias = true, Color = A(SKColors.Black, 0.5f * alpha), MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 16) };
+            using var soft = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 16);
+            using var shade = new SKPaint { IsAntialias = true, Color = A(SKColors.Black, 0.5f * alpha), MaskFilter = soft };
             canvas.Save();
             canvas.Translate(0, 10);
             canvas.DrawPath(frontPath, shade);

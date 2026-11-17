@@ -60,9 +60,12 @@ public static partial class Labels
         _ => $"{names[0]}, {names[1]} and {FloorCount(names.Count - 2, "other", "others")} are working."
     };
 
-    /// <summary>The soonest queued wake of an active position.</summary>
+    /// <summary>
+    /// The soonest queued wake of an active position: that it is queued and when it is due, which is what the queue records — not a
+    /// promise that the turn opens then.
+    /// </summary>
     public static string FloorNext(string name, TimeSpan until) =>
-        until <= TimeSpan.Zero ? $"Next turn: {name}, due now." : $"Next turn: {name}, in {FloorSpan(until)}.";
+        until <= TimeSpan.Zero ? $"Queued next: {name}, due now." : $"Queued next: {name}, due in {FloorSpan(until)}.";
 
     /// <summary>What a working cell's caption says under its name: how long its turn has been open.</summary>
     public static string FloorWorkingFor(TimeSpan open) => "working · " + FloorClock(open);
@@ -191,9 +194,12 @@ public static partial class Labels
 
     public static string FloorOwnerWords(string to) => $"You wrote to {to}.";
 
-    /// <summary>A tool call, as a working cell's caption shows it under its name.</summary>
+    /// <summary>
+    /// A tool call, as a working cell's caption shows it under its name. What it was called with is the seat's own words, so it is
+    /// shown as a quotation like everything else an AI wrote; the tool's name and "refused" are TradeAgent's.
+    /// </summary>
     public static string FloorTool(string tool, string? argument, bool served) =>
-        (served ? "" : "refused: ") + (argument is { Length: > 0 } ? FloorCut(argument, 72) : tool);
+        (served ? "" : "refused: ") + (argument is { Length: > 0 } ? FloorQuote(argument, 64) : tool);
 
     // ---- how the floor says a length of time, a count, and somebody else's words ---------------------------------------------------
 

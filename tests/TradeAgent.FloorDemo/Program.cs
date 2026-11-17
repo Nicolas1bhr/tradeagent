@@ -27,6 +27,17 @@ if (!Path.GetFileName(home).StartsWith("demo-", StringComparison.Ordinal))
     return 2;
 }
 
+// NOT BY WAY OF A LINK: a folder named demo-… that is a link to somewhere else — or whose state folder is — would write wherever it
+// points, and that could be a real home. The name is the check, so the name has to be the place.
+foreach (var place in new[] { home, Path.Combine(home, "state") })
+{
+    if (new DirectoryInfo(place) is { Exists: true, LinkTarget: { } target })
+    {
+        Console.Error.WriteLine($"refused: {place} is a link to {target}, not a folder of its own. Nothing was written.");
+        return 2;
+    }
+}
+
 // THE HOME IS THIS PROCESS'S BEFORE ANYTHING READS PATHS: every store that looks a path up finds the demo home, never the real one.
 Environment.SetEnvironmentVariable("TRADEAGENT_HOME", home);
 if (string.Equals(Path.GetFullPath(Paths.DefaultHome()).TrimEnd(Path.DirectorySeparatorChar), home, StringComparison.OrdinalIgnoreCase))

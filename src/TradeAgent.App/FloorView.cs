@@ -6,6 +6,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using TradeAgent.AgentRuntime;
 using TradeAgent.Core;
 using TradeAgent.Core.Board;
 using TradeAgent.Core.Db;
@@ -69,6 +70,13 @@ sealed record FloorSources
     /// <summary>Whether an AI is running at all: while it is not, the floor offers the same start the Chat page does.</summary>
     public Func<bool> AiRunning { get; init; } = () => false;
 
+    /// <summary>
+    /// WHETHER TURNS ARE BEING OPENED NOW: the loop is working or waiting for its next turn, and nothing is holding it — not the
+    /// vendor's limit, not a full disk, not the wait after a start that did not close properly. Read off the loop itself, never off
+    /// the sentence that describes it: "waiting until 14:00 for your plan's limit" is waiting, and nothing will open.
+    /// </summary>
+    public Func<bool> TurnsOpen { get; init; } = () => false;
+
     public Func<DateTimeOffset> Now { get; init; } = () => DateTimeOffset.UtcNow;
 
     /// <summary>The sources over the running app.</summary>
@@ -84,7 +92,9 @@ sealed record FloorSources
         Floor = () => host.OrgLedger is null ? null : new FloorStore(host.Db),
         Board = () => host.Board.Seats(),
         Glance = () => GlanceRead.From(host, DateTimeOffset.UtcNow),
-        AiRunning = () => host.Agent.Running
+        AiRunning = () => host.Agent.Running,
+        TurnsOpen = () => host.Mission.Status is { State: MissionState.Working or MissionState.Waiting, Held: null }
+                          && host.DiskPauseWords is null && host.CrashWaitWords is null
     };
 }
 
@@ -207,7 +217,7 @@ sealed partial class FloorPage
     static readonly TimeSpan Lag = TimeSpan.FromSeconds(1.5);
 
     /// <summary>How often the floor looks for something new while it is on screen.</summary>
-    static readonly TimeSpan Look = TimeSpan.FromSeconds(1.5);
+    static readonly TimeSpan Look = TimeSpan.FromSeconds(2);
 
     const int FeedLines = 9, Remembered = 240;
     const double FeedWidth = 318;
@@ -224,6 +234,8 @@ sealed partial class FloorPage
     readonly TextBlock _working = Ui.Body("");
     readonly TextBlock _next = Ui.Muted("");
     readonly TextBlock _problem = Ui.Body("", Theme.Caution);
+    /// <summary>That the floor cannot be drawn, and why: its own line, which no later read takes away — the floor stays dark for the rest of the run.</summary>
+    readonly TextBlock _notDrawn = Ui.Body("", Theme.Caution);
     readonly Control _start;
     readonly StackPanel _feed = new() { Spacing = Theme.S3 };
     readonly TextBlock _feedTitle = Ui.Eyebrow(Labels.FloorFeed);
@@ -247,7 +259,7 @@ sealed partial class FloorPage
     readonly List<FloorLine> _lines = [];
     readonly Dictionary<string, Caption> _captionOf = new(StringComparer.Ordinal);
     string? _chosen, _pointed;
-    /// <summary>The AI is stopped or paused: no turn opens, so an active seat's dim light means only that it has a place.</summary>
+    /// <summary>No turn is being opened now — the AI is stopped, paused or held: an active seat's dim light means only that it has a place.</summary>
     bool _asleep;
     FloorFrame? _frame;
 
@@ -269,7 +281,13 @@ sealed partial class FloorPage
         });
 
         // The Chat page's own start, here too: while no AI is running, the app still opens on an answer to "so how do I start?".
-        _start = Ui.With(Ui.Primary(Labels.FloorStart, startOrStop), b => b.HorizontalAlignment = HorizontalAlignment.Left);
+        // GUARDED AT THE PRESS: the shell's own action starts the AI when none is running and STOPS it when one is, and whether this
+        // button is shown is as old as the page's last read. So the press asks again, now, and does nothing if an AI is already running.
+        _start = Ui.With(Ui.Primary(Labels.FloorStart, async () =>
+        {
+            if (_sources.AiRunning()) return;
+            await startOrStop();
+        }), b => b.HorizontalAlignment = HorizontalAlignment.Left);
         _start.IsVisible = false;
         _problem.IsVisible = false;
         _next.FontSize = Theme.Small;
@@ -280,6 +298,7 @@ sealed partial class FloorPage
             Ui.With(_working, t => { t.MaxWidth = 460; t.Margin = new Thickness(0, Theme.S2, 0, 0); }),
             Ui.With(_next, t => t.MaxWidth = 460),
             Ui.With(_problem, t => t.MaxWidth = 460),
+            Ui.With(_notDrawn, t => { t.MaxWidth = 460; t.IsVisible = false; }),
             Ui.With(_start, c => c.Margin = new Thickness(0, Theme.S3, 0, 0)),
             Ui.With(BuildReplay(), c => c.Margin = new Thickness(-Theme.S2, Theme.S2, 0, 0)));
         title.HorizontalAlignment = HorizontalAlignment.Left;
@@ -317,11 +336,7 @@ sealed partial class FloorPage
             return (28, (float)top, (float)(size.Width - (_feedColumn.IsVisible ? FeedWidth - 14 : 28)), (float)bottom);
         };
         _stage.Framed += frame => Safely(() => Place(frame));
-        _stage.Failed += why =>
-        {
-            _problem.Text = Labels.FloorNotDrawn + " " + why;
-            _problem.IsVisible = true;
-        };
+        _stage.Failed += NotDrawn;
         _stage.Pointed += id => { _pointed = id; Mark(); };
         _stage.Chosen += id => { _chosen = id == _chosen ? null : id; Mark(); Feed(); };
         Root.PropertyChanged += (_, e) =>
@@ -336,6 +351,13 @@ sealed partial class FloorPage
         _clock = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, (_, _) => Safely(Tick));
     }
 
+    /// <summary>The floor could not be drawn: said on the page, on a line of its own that stays.</summary>
+    internal void NotDrawn(string why)
+    {
+        _notDrawn.Text = Labels.FloorNotDrawn + " " + why;
+        _notDrawn.IsVisible = true;
+    }
+
     /// <summary>
     /// A timer's or a frame's work, with whatever it throws said on the page and never let out: a handler nobody awaits that throws ends
     /// the program, and this page is a picture — it does not get to take the owner's controls down with it.
@@ -345,8 +367,7 @@ sealed partial class FloorPage
         try { work(); }
         catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
         {
-            _problem.Text = Labels.FloorNotRead + " " + (ex is TradeAgentException t ? t.Info.UserMessage : ex.Message);
-            _problem.IsVisible = true;
+            NotDrawn(ex is TradeAgentException t ? t.Info.UserMessage : ex.Message);
         }
     }
 
@@ -411,7 +432,26 @@ sealed partial class FloorPage
         GlanceRead? Glance, bool Running, DateTimeOffset Now, DateTimeOffset Until, string? Problem)
     {
         public FloorTapeRead? Tape { get; init; }
+
+        /// <summary>Whether turns are being opened now (<see cref="FloorSources.TurnsOpen"/>).</summary>
+        public bool Opening { get; init; }
     }
+
+    // What the reads keep between looks. Touched only by the read itself, which never overlaps another.
+    GlanceRead? _glance;
+    DateTimeOffset _glanceAt, _tapeAt;
+    FloorTapeRead? _tape;
+    static readonly TimeSpan TapeEvery = TimeSpan.FromSeconds(15);
+    readonly List<FloorMarks> _marks = [];
+
+    /// <summary>"At a glance" is the Dashboard's whole read — the chart, the day's launches, every open mandate, the board, the campaigns, the paper runs. The floor takes it as often as the Dashboard does, not on every look.</summary>
+    static readonly TimeSpan GlanceEvery = TimeSpan.FromSeconds(5);
+
+    /// <summary>How often the ledgers are marked, how many marks are kept, and how old a mark must be before a look trusts it: a row is written within moments of the time it carries, never this long after.</summary>
+    static readonly TimeSpan MarkEvery = TimeSpan.FromMinutes(2), MarkTrusted = TimeSpan.FromSeconds(45);
+
+    /// <summary>A look that finds the floor was last read longer ago than this fills the sentences in again rather than playing what it missed as if it were happening.</summary>
+    static readonly TimeSpan Missed = TimeSpan.FromSeconds(12);
 
     /// <summary>How much of the tape the floor shows: the last two hours of minutes.</summary>
     static readonly TimeSpan TapeStretch = TimeSpan.FromHours(2);
@@ -470,17 +510,46 @@ sealed partial class FloorPage
         if (org is null || floor is null)
             return new Reading(FloorChart.Empty, OrgNames.None, [], [], false, null, _sources.AiRunning(), now, until, null);
 
+        // WHAT WAS MISSED IS NOT PLAYED AS IF IT WERE HAPPENING: a floor last read a while ago — it was off screen, a read failed, the
+        // computer slept — is filled in again from the last day, with nothing moving. And the clock going back never moves the read back.
+        if (since is { } last && (until - last > Missed || until <= last)) since = until <= last ? last : null;
+
         var units = org.Units();
         var positions = org.Positions();
         var names = OrgNames.Of(units, positions);
         var chart = FloorChart.From(units, positions, names, _sources.Board());
         // OPEN NOW, by the rule "At a glance" uses: launched in the last day and not ended.
         var open = floor.Turns(now, now).Where(t => t.EndedAt is null && t.StartedAt >= now.AddDays(-1)).ToList();
-        // The first look fills the sentences from the last day, with nothing moving; every later one takes only what is new.
-        var events = since is { } from ? floor.Events(from, until) : floor.Events(until.AddDays(-1), until, 400, tools: false);
-        return new Reading(chart, names, open, events, since is null, _sources.Glance(), _sources.AiRunning(), now, until, null)
+
+        // The first look fills the sentences from the last day, with nothing moving; every later one takes only what is new — and of the
+        // ledgers that have no index on their time, only the rows written since a mark old enough to be trusted.
+        IReadOnlyList<FloorEvent> events;
+        if (since is { } from)
         {
-            Tape = TapeAt(now, TapeStretch)
+            var mark = _marks.LastOrDefault(m => m.TakenAt <= from - MarkTrusted);
+            events = until > from ? floor.Events(from, until, after: mark) : [];
+        }
+        else events = floor.Events(until.AddDays(-1), until, 400, tools: false);
+        if (_marks.Count == 0 || now - _marks[^1].TakenAt >= MarkEvery)
+        {
+            _marks.Add(floor.Marks(now));
+            if (_marks.Count > 3) _marks.RemoveAt(0);
+        }
+
+        if (_glance is null || now - _glanceAt >= GlanceEvery)
+        {
+            _glance = _sources.Glance();
+            _glanceAt = now;
+        }
+        // The tape moves once a minute: it is read a few times a minute, not on every look.
+        if (_tape is null || now - _tapeAt >= TapeEvery)
+        {
+            _tape = TapeAt(now, TapeStretch);
+            _tapeAt = now;
+        }
+        return new Reading(chart, names, open, events, since is null, _glance, _sources.AiRunning(), now, until, null)
+        {
+            Tape = _tape, Opening = _sources.TurnsOpen()
         };
     }
 
@@ -490,11 +559,18 @@ sealed partial class FloorPage
     {
         // A read that was on its way when a replay began is not shown over it.
         if (_replay is not null) return;
+        // The read's own trouble comes and goes with the reads. That the floor cannot be DRAWN is another line, and stays.
         _problem.IsVisible = r.Problem is not null;
         if (r.Problem is { } problem)
         {
             _problem.Text = Labels.FloorNotRead + " " + problem;
             return;
+        }
+        if (r.Backfill)
+        {
+            // Filled in again from the ledgers: the sentences are whatever the last day holds, and nothing of before is left crossing.
+            _lines.Clear();
+            _lastTool.Clear();
         }
 
         _names = r.Names;
@@ -509,7 +585,7 @@ sealed partial class FloorPage
         }
 
         var loop = r.Glance?.Loop ?? "";
-        var asleep = _asleep = loop.StartsWith("stopped", StringComparison.Ordinal) || loop.StartsWith("paused", StringComparison.Ordinal);
+        var asleep = _asleep = !r.Opening;
         _openSince.Clear();
         foreach (var turn in r.Open) _openSince[turn.Role] = turn.StartedAt;
         foreach (var gone in _lastTool.Keys.Where(k => !_openSince.ContainsKey(k)).ToList()) _lastTool.Remove(gone);
@@ -521,12 +597,13 @@ sealed partial class FloorPage
         _stage.Scene.Flag(late);
 
         foreach (var e in r.Events) Happened(e, moving: !r.Backfill);
-        _seen = r.Until;
+        if (_seen is null || r.Until > _seen) _seen = r.Until;
         _stage.Scene.Tape(r.Tape is { } tape ? Drawn(tape.Symbol, tape.Bars, r.Now) : null);
 
         Say(r, loop);
         Feed();
-        _stage.Wake();
+        // The scene was told what the look found; if that was nothing new, no frame is drawn for it.
+        _stage.Nudge();
     }
 
     /// <summary>One recorded event: its sentence is kept, and — unless it is only history being filled in — it is shown happening.</summary>
@@ -625,7 +702,8 @@ sealed partial class FloorPage
         _working.Text = Labels.FloorWorking([.. _openSince.OrderBy(o => o.Value).Select(o => FloorWords.Who(o.Key, _names))]);
         _working.IsVisible = r.Chart.Units.Count > 0;
 
-        // THE NEXT TURN: the soonest queued wake of an active position — said only while the AI runs, since a stopped one serves none.
+        // QUEUED NEXT: the soonest queued wake of an active position, as the queue has it — said only while turns are being opened,
+        // since a loop that is stopped, paused or held serves none of them.
         var next = r.Glance is { Wakes: { } wakes, Active: { } active }
             ? active.Where(wakes.ContainsKey).OrderBy(p => wakes[p]).Select(p => (Position: p, At: wakes[p])).FirstOrDefault()
             : default;
